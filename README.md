@@ -153,7 +153,10 @@ The server provides the following tools for querying Snowflake:
 - **list_views**: List all views in a specified database and schema
 - **describe_view**: Get detailed information about a specific view including columns and SQL definition
 - **query_view**: Query data from a view with an optional row limit
-- **execute_query**: Execute custom read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH) with results formatted as markdown tables
+- **execute_query**: Execute custom read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH) with results formatted as markdown tables. Supports:
+  - SHOW commands for metadata (TABLES, PIPES, TASKS, STREAMS, GRANTS, PROCEDURES, FUNCTIONS, etc.)
+  - INFORMATION_SCHEMA queries for detailed object metadata
+  - SNOWFLAKE.ACCOUNT_USAGE queries for historical and audit data (requires permissions)
 
 ### Example Queries
 
@@ -166,6 +169,12 @@ When using with VS Code, you can ask questions like:
 - "Run this SQL query: SELECT customer_id, SUM(order_total) as total_spend FROM SALES.ORDERS GROUP BY customer_id ORDER BY total_spend DESC LIMIT 10"
 - "Query the MARKETING database to find the top 5 performing campaigns by conversion rate"
 - "Compare data from views in different databases by querying SALES.CUSTOMER_METRICS and MARKETING.CAMPAIGN_RESULTS"
+- "Show me all tables in the SALES schema"
+- "Find all columns named 'customer_id' across all tables in the database"
+- "Show me all stored procedures in the ETL schema"
+- "List all pipes that load data into the RAW_DATA database"
+- "Show the query history for the last hour"
+- "What tasks are scheduled to run in this database?"
 
 ### Configuration
 

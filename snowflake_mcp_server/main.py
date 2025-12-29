@@ -618,13 +618,13 @@ def run_stdio_server() -> None:
                 ),
                 mcp_types.Tool(
                     name="execute_query",
-                    description="Execute a read-only SQL query against Snowflake",
+                    description="Execute read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH). Use SHOW for metadata (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA for object details, ACCOUNT_USAGE for audit data.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "The SQL query to execute (supports SELECT, SHOW, DESCRIBE, EXPLAIN, and WITH statements)",
+                                "description": "SQL query to execute. Supports: SELECT, SHOW commands (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA queries, ACCOUNT_USAGE queries",
                             },
                             "database": {
                                 "type": "string",
