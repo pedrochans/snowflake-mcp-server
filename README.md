@@ -130,7 +130,7 @@ This is an example of how the entire JSON file should look like if you have only
       ]
    }
    ```
-3. After that, click on **Run** or **Restart**
+3. After that, click on **Start** or **Restart**
 
    <img src="img/mcp-run-restart.png" alt="MCP Server Run/Restart" width="50%">
    
