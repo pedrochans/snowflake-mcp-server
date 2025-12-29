@@ -107,7 +107,7 @@ This is an example of how the entire JSON file should look like if you have only
             "command": "uv",
             "args": [
                "--directory",
-               "C:/Users/pchans/OneDrive - Indra/Work/Directorio/snowflake-mcp-server",
+               "/<path-to-code>/snowflake-mcp-server",
                "run",
                "snowflake-mcp"
             ]
