@@ -38,7 +38,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
    Or, in VS Code in **Source Control Menu** (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd>), go to **Source Control Menu → Clone Repository → Clone from Github** → Paste the URL or use the search bar
 
-   <img src="img/clone-repository.png" alt="Clone Repository from GitHub" width="50%">
+   <img src="img/clone-repository.png" alt="Clone Repository from GitHub" width="75%">
 
 2. **Install uv** (if not already installed):
    
@@ -141,7 +141,9 @@ This is an example of how the entire JSON file should look like if you have only
 Now you can go to GitHub Copilot chat, ensure that the new Tool is available in **Agent mode → Configure Tools**,
 and start prompting!
 
-<img src="img/image-1.png" alt="GitHub Copilot Configuration" width="50%">
+<p align="center">
+  <img src="img/image-1.png" alt="GitHub Copilot Configuration" width="50%">
+</p>
 
 ## Available Tools
 
