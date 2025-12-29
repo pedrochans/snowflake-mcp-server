@@ -38,7 +38,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
    Or, in VS Code in **Source Control Menu** (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd>), go to **Source Control Menu → Clone Repository → Clone from Github** → Paste the URL or use the search bar
 
-   ![Clone Repository from GitHub](img/clone-repository.png)
+   <img src="img/clone-repository.png" alt="Clone Repository from GitHub" width="50%">
 
 2. **Install uv** (if not already installed):
    
@@ -98,9 +98,26 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    }
    ```
 
-   ![Snowflake MCP Configuration](img/image.png)
+This is an example of how the entire JSON file should look like if you have only this MCP installed:
+
+   ```yaml
+   {
+      "servers": {
+         "snowflake-mcp-server": {
+            "command": "uv",
+            "args": [
+               "--directory",
+               "C:/Users/pchans/OneDrive - Indra/Work/Directorio/snowflake-mcp-server",
+               "run",
+               "snowflake-mcp"
+            ]
+         }
+      },
+      "inputs": []
+   }
+   ```
    
-   Or explicitly specify the stdio transport:
+   Alternative option: explicitly specify the stdio transport:
    
    ```yaml
    "snowflake-mcp-server": {
@@ -113,7 +130,9 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
       ]
    }
    ```
-3. Click on **Run** or **Restart**
+3. After that, click on **Run** or **Restart**
+
+   <img src="img/mcp-run-restart.png" alt="MCP Server Run/Restart" width="50%">
    
    When using external browser authentication, a browser window will automatically open prompting you to log in to your Snowflake account.
 
@@ -122,7 +141,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 Now you can go to GitHub Copilot chat, ensure that the new Tool is available in **Agent mode → Configure Tools**,
 and start prompting!
 
-![GitHub Copilot Configuration](img/image-1.png)
+<img src="img/image-1.png" alt="GitHub Copilot Configuration" width="50%">
 
 ## Available Tools
 
