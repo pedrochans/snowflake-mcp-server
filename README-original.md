@@ -2,8 +2,6 @@
 
 A Model Context Protocol (MCP) server for performing read-only operations against Snowflake databases. This tool enables Claude to securely query Snowflake data without modifying any information.
 
-This repository is a fork from [snowflake-mcp-server](https://github.com/dynamike/snowflake-mcp-server), from Michael Kania.
-
 ## Features
 
 - Flexible authentication to Snowflake using either:
@@ -53,6 +51,11 @@ The server provides the following tools for querying Snowflake:
    ```
    
    After installation, close and reopen your terminal to refresh the PATH.
+   
+   On macOS/Linux:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
 
 3. **Create a virtual environment and install the package**:
    ```bash
@@ -86,12 +89,61 @@ The server provides the following tools for querying Snowflake:
    ```
    Then edit the `.env` file to set your Snowflake account details and path to your private key.
 
+#### Option 2: Using standard pip and venv
+
+1. **Verify Python version**:
+   ```bash
+   python --version  # Should be 3.12 or higher
+   ```
+
+2. **Clone this repository**:
+   ```bash
+   git clone https://github.com/yourusername/snowflake-mcp-server.git
+   cd snowflake-mcp-server
+   ```
+
+3. **Create and activate a virtual environment**:
+   
+   On Windows:
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\activate
+   ```
+   
+   On macOS/Linux:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. **Install the package**:
+   ```bash
+   pip install -e .
+   ```
+
+5. **Configure your Snowflake credentials** (same as Option 1, step 4 above)
+
 ## Usage
 
-### Running in VS Code with Github Copilot
+### Running with uv
 
-1. In VS Code, press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>, then search for **MCP: Open User Configuration**
-3. In this JSON, add a new server with the full path to your uv executable:
+After installing the package, you can run the server directly with:
+
+```
+uv run snowflake-mcp
+
+# Or you can be explicit about using stdio transport
+uv run snowflake-mcp-stdio
+```
+
+This will start the stdio-based MCP server, which can be connected to Claude Desktop or any MCP client that supports stdio communication.
+
+When using external browser authentication, a browser window will automatically open prompting you to log in to your Snowflake account.
+
+### Claude Desktop Integration
+
+1. In Claude Desktop, go to Settings → MCP Servers
+2. Add a new server with the full path to your uv executable:
    ```yaml
    "snowflake-mcp-server": {
       "command": "uv",
@@ -103,8 +155,6 @@ The server provides the following tools for querying Snowflake:
       ]
    }
    ```
-
-   ![Snowflake MCP Configuration](img/image.png)
    
    Or explicitly specify the stdio transport:
    
@@ -119,21 +169,12 @@ The server provides the following tools for querying Snowflake:
       ]
    }
    ```
-3. Click on **Run** or **Restart**
-   
-   When using external browser authentication, a browser window will automatically open prompting you to log in to your Snowflake account.
-
-4. If everything is OK, you will see the message: **"Discovered 5 tools"**
-
-Now you can go to GitHub Copilot chat, ensure that the new Tool is available in **Agent mode → Configure Tools**,
-and start prompting!
-
-![GitHub Copilot Configuration](img/image-1.png)
-
+3. You can find your uv path by running `which uv` in your terminal
+4. Save the server configuration
 
 ### Example Queries
 
-When using with VS Code, you can ask questions like:
+When using with Claude, you can ask questions like:
 
 - "Can you list all the databases in my Snowflake account?"
 - "List all views in the MARKETING database"
@@ -155,6 +196,24 @@ Example `.env` configuration:
 SNOWFLAKE_CONN_REFRESH_HOURS=4
 ```
 
+## Authentication Methods
+
+### Private Key Authentication
+
+This method uses a service account and private key for non-interactive authentication, ideal for automated processes.
+
+1. Create a key pair for your Snowflake user following [Snowflake documentation](https://docs.snowflake.com/en/user-guide/key-pair-auth)
+2. Set `SNOWFLAKE_AUTH_TYPE=private_key` in your `.env` file
+3. Provide the path to your private key in `SNOWFLAKE_PRIVATE_KEY_PATH`
+
+### External Browser Authentication
+
+This method opens a browser window for interactive authentication.
+
+1. Set `SNOWFLAKE_AUTH_TYPE=external_browser` in your `.env` file
+2. When you start the server, a browser window will open asking you to log in
+3. After authentication, the session will remain active for the duration specified by your Snowflake account settings
+
 ## Security Considerations
 
 This server:
@@ -164,6 +223,32 @@ This server:
 - Validates inputs to prevent SQL injection
 
 ⚠️ **Important**: Keep your `.env` file secure and never commit it to version control. The `.gitignore` file is configured to exclude it.
+
+## Development
+
+### Static Type Checking
+
+```
+mypy mcp_server_snowflake/
+```
+
+### Linting
+
+```
+ruff check .
+```
+
+### Formatting
+
+```
+ruff format .
+```
+
+### Running Tests
+
+```
+pytest
+```
 
 ## Contributing
 
