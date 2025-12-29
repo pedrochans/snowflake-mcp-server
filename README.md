@@ -36,6 +36,10 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    cd snowflake-mcp-server
    ```
 
+   Or, in VS Code in **Source Control Menu** (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd>), go to **Source Control Menu → Clone Repository → Clone from Github** → Paste the URL or use the search bar
+
+   ![Clone Repository from GitHub](img/clone-repository.png)
+
 2. **Install uv** (if not already installed):
    
    ```powershell
