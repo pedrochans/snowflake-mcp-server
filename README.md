@@ -17,16 +17,6 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 - Support for Python 3.12+
 - Stdio-based MCP server for easy integration with Claude Desktop
 
-## Available Tools
-
-The server provides the following tools for querying Snowflake:
-
-- **list_databases**: List all accessible Snowflake databases
-- **list_views**: List all views in a specified database and schema
-- **describe_view**: Get detailed information about a specific view including columns and SQL definition
-- **query_view**: Query data from a view with an optional row limit
-- **execute_query**: Execute custom read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH) with results formatted as markdown tables
-
 ## Installation
 
 ### Prerequisites
@@ -130,6 +120,15 @@ and start prompting!
 
 ![GitHub Copilot Configuration](img/image-1.png)
 
+## Available Tools
+
+The server provides the following tools for querying Snowflake:
+
+- **list_databases**: List all accessible Snowflake databases
+- **list_views**: List all views in a specified database and schema
+- **describe_view**: Get detailed information about a specific view including columns and SQL definition
+- **query_view**: Query data from a view with an optional row limit
+- **execute_query**: Execute custom read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH) with results formatted as markdown tables
 
 ### Example Queries
 
