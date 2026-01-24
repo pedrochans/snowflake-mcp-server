@@ -28,11 +28,24 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
 ### Installation Steps
 
-#### Option 1: Using uv (Recommended)
+1. **Verify Python installation**:
+   
+   First, ensure Python 3.12+ is installed and accessible:
+   
+   ```powershell
+   python --version
+   ```
+   
+   If the command is not recognized, you may need to:
+   - Install Python from [python.org](https://www.python.org/downloads/)
+   - During installation, **check "Add Python to PATH"**
+   - Or add Python manually to your system PATH
 
-1. **Clone this repository**:
+2. **Clone this repository**:
    ```bash
    git clone https://github.com/yourusername/snowflake-mcp-server.git
+   ```   
+   ```bash
    cd snowflake-mcp-server
    ```
 
@@ -40,15 +53,45 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
    <img src="img/clone-repository.png" alt="Clone Repository from GitHub" width="75%">
 
-2. **Install uv** (if not already installed):
+3. **Install uv** (if not already installed):
    
    ```powershell
    pip install uv
    ```
    
-   After installation, close and reopen your terminal to refresh the PATH.
+   **If `pip` is not recognized**, you need to add Python to your PATH:
+   
+   **⚠️ Add Python to PATH (User Variables)**:
+   
+   1. Press <kbd>Win</kbd> + <kbd>R</kbd> and type: `sysdm.cpl`
+   2. Go to **Advanced** tab → Click **Environment Variables**
+   3. In the **User variables** section (top half - NOT System variables), select `Path` and click **Edit**
+   4. Click **New** and add these TWO paths (adjust Python version as needed):
+      ```
+      C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312
+      C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312\Scripts
+      ```
+   5. Click **OK** in all windows
+   6. **Close and reopen your terminal** completely
+   
+   **Find your Python installation path**:
+   ```powershell
+   python -c "import sys; print(sys.prefix)"
+   ```
+   This shows the first path. Add `\Scripts` to the end for the second path.
+   
+   **After adding to PATH, try again**:
+   ```powershell
+   pip install uv
+   ```
+   
+   **Verify uv is installed correctly**:
+   ```powershell
+   uv --version
+   ```
 
-3. **Create a virtual environment and install the package**:
+4. **Create a virtual environment and install the package**:
+   
    ```bash
    # Create a virtual environment with Python 3.12+
    uv venv
@@ -63,8 +106,17 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    # Install the package in editable mode
    uv pip install -e .
    ```
+   
+   **Verify the installation**:
+   ```powershell
+   # You should see snowflake-mcp-server listed
+   uv pip list
+   ```
+   
+   > [!NOTE]
+   > Si encuentras problemas de compatibilidad entre tu versión de Python y las librerías, pide ayuda a Copilot para encontrar versiones compatibles.
 
-4. **Configure your Snowflake credentials**:
+5. **Configure your Snowflake credentials**:
 
    Choose one of the provided example files based on your preferred authentication method:
 
