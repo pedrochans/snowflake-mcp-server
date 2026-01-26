@@ -43,7 +43,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
 2. **Clone this repository**:
    ```bash
-   git clone https://github.com/yourusername/snowflake-mcp-server.git
+   git clone https://github.com/pedrochans/snowflake-mcp-server.git
    ```   
    ```bash
    cd snowflake-mcp-server
