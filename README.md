@@ -21,27 +21,48 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
 ### Prerequisites
 
-- Python 3.12 or higher
-- A Snowflake account with either:
-  - A configured service account (username + private key), or
-  - A regular user account for browser-based authentication
-
-### Installation Steps
-
-1. **Verify Python installation**:
+1. **Python 3.12 or higher**
    
-   First, ensure Python 3.12+ is installed and accessible:
+   Install Python from [python.org](https://www.python.org/downloads/). During installation, **check "Add Python to PATH"**.
    
+   Verify installation:
    ```powershell
    python --version
    ```
-   
-   If the command is not recognized, you may need to:
-   - Install Python from [python.org](https://www.python.org/downloads/)
-   - During installation, **check "Add Python to PATH"**
-   - Or add Python manually to your system PATH
 
-2. **Clone this repository**:
+2. **Python in PATH**
+   
+   If Python is not recognized, add it to your PATH:
+   
+   - Press <kbd>Win</kbd> + <kbd>R</kbd> and type: `sysdm.cpl`
+   - Go to **Advanced** tab → **Environment Variables**
+   - In **User variables**, select `Path` and click **Edit**
+   - Click **New** and add these paths (adjust Python version as needed):
+     ```
+     C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312
+     C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312\Scripts
+     ```
+   - Click **OK** in all windows and **restart your terminal**
+   
+   Find your Python path with:
+   ```powershell
+   python -c "import sys; print(sys.prefix)"
+   ```
+
+3. **Microsoft Visual C++ Build Tools**
+   
+   Required for installing Python packages with native dependencies.
+   
+   Download and install from [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/):
+   - Run the installer
+   - Select **"Desktop development with C++"**
+   - Click Install
+
+> If you have installed any of the prerequisites above (Python, Visual C++ Build Tools, or modified PATH), **restart your computer** before proceeding with the installation steps.
+
+### Installation Steps
+
+1. **Clone this repository**:
    ```bash
    git clone https://github.com/pedrochans/snowflake-mcp-server.git
    ```   
@@ -53,44 +74,18 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
    <img src="img/clone-repository.png" alt="Clone Repository from GitHub" width="75%">
 
-3. **Install uv** (if not already installed):
+2. **Install uv**:
    
    ```powershell
    pip install uv
    ```
    
-   **If `pip` is not recognized**, you need to add Python to your PATH:
-   
-   **⚠️ Add Python to PATH (User Variables)**:
-   
-   1. Press <kbd>Win</kbd> + <kbd>R</kbd> and type: `sysdm.cpl`
-   2. Go to **Advanced** tab → Click **Environment Variables**
-   3. In the **User variables** section (top half - NOT System variables), select `Path` and click **Edit**
-   4. Click **New** and add these TWO paths (adjust Python version as needed):
-      ```
-      C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312
-      C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312\Scripts
-      ```
-   5. Click **OK** in all windows
-   6. **Close and reopen your terminal** completely
-   
-   **Find your Python installation path**:
-   ```powershell
-   python -c "import sys; print(sys.prefix)"
-   ```
-   This shows the first path. Add `\Scripts` to the end for the second path.
-   
-   **After adding to PATH, try again**:
-   ```powershell
-   pip install uv
-   ```
-   
-   **Verify uv is installed correctly**:
+   Verify installation:
    ```powershell
    uv --version
    ```
 
-4. **Create a virtual environment and install the package**:
+3. **Create a virtual environment and install the package**:
    
    Create a virtual environment with Python 3.12+:
    ```bash
@@ -121,7 +116,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    > [!NOTE]
    > Si encuentras problemas de compatibilidad entre tu versión de Python y las librerías, pide ayuda a Copilot para encontrar versiones compatibles.
 
-5. **Configure your Snowflake credentials**:
+4. **Configure your Snowflake credentials**:
 
    Choose one of the provided example files based on your preferred authentication method:
 
