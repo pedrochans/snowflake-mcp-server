@@ -92,18 +92,23 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
 4. **Create a virtual environment and install the package**:
    
+   Create a virtual environment with Python 3.12+:
    ```bash
-   # Create a virtual environment with Python 3.12+
    uv venv
+   ```
    
-   # Activate the virtual environment
-   # On Windows:
+   On Windows:
+   ```bash
    .venv\Scripts\activate
+   ```
    
-   # On macOS/Linux:
+   On macOS/Linux:
+   ```bash
    source .venv/bin/activate
+   ```
    
-   # Install the package in editable mode
+   Install the package in editable mode:
+   ```bash
    uv pip install -e .
    ```
    
