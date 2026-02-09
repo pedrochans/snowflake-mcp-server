@@ -13,6 +13,10 @@ The primary components are:
   auth or browser auth
 """
 
+# Import pip-system-certs first to ensure SSL uses Windows certificate store
+# This is crucial for corporate environments with custom SSL certificates
+import pip_system_certs.wrapt_requests  # noqa: F401
+
 import contextlib
 import os
 import threading

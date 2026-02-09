@@ -16,6 +16,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 - Read-only operations with security checks to prevent data modification
 - Support for Python 3.12+
 - Stdio-based MCP server for easy integration with Claude Desktop
+- **Corporate SSL Certificate Support**: Automatically uses Windows certificate store for SSL connections, ensuring compatibility with corporate environments that use custom or self-signed certificates
 
 ## Installation
 
@@ -261,3 +262,4 @@ This project uses:
 - [MCP (Model Context Protocol)](https://github.com/anthropics/anthropic-cookbook/tree/main/mcp) for interacting with Claude
 - [Pydantic](https://docs.pydantic.dev/) for data validation
 - [python-dotenv](https://github.com/theskumar/python-dotenv) for environment variable management
+- [pip-system-certs](https://pypi.org/project/pip-system-certs/) for corporate SSL certificate support on Windows

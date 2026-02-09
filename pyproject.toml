@@ -16,7 +16,8 @@ dependencies = [
     "cryptography>=41.0.0",
     "mcp",
     "anyio>=3.7.1",
-    "sqlglot>=11.5.5"
+    "sqlglot>=11.5.5",
+    "pip-system-certs>=4.0"
 ]
 
 [project.scripts]

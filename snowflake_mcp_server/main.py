@@ -10,6 +10,10 @@ The server is designed to be used with Claude Desktop as an MCP server, providin
 Claude with secure, controlled access to Snowflake data for analysis and reporting.
 """
 
+# Import pip-system-certs first to ensure SSL uses Windows certificate store
+# This is crucial for corporate environments with custom SSL certificates
+import pip_system_certs.wrapt_requests  # noqa: F401
+
 import os
 from typing import Any, Dict, List, Optional, Sequence, Union
 

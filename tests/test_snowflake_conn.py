@@ -1,11 +1,15 @@
 """Tests for Snowflake connection utilities."""
 
+# Import pip-system-certs first to ensure SSL uses Windows certificate store
+# This is crucial for corporate environments with custom SSL certificates
+import pip_system_certs.wrapt_requests  # noqa: F401
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from mcp_server_snowflake.utils.snowflake_conn import (
+from snowflake_mcp_server.utils.snowflake_conn import (
     AuthType,
     SnowflakeConfig,
     get_snowflake_connection,
@@ -47,7 +51,7 @@ def snowflake_config_browser() -> SnowflakeConfig:
     )
 
 
-@patch("mcp_server_snowflake.utils.snowflake_conn.load_private_key")
+@patch("snowflake_mcp_server.utils.snowflake_conn.load_private_key")
 @patch("snowflake.connector.connect")
 def test_get_snowflake_connection_private_key(
     mock_connect: MagicMock,
