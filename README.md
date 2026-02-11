@@ -35,20 +35,23 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    
    If Python is not recognized, add it to your PATH:
    
-   - Press <kbd>Win</kbd> + <kbd>R</kbd> and type: `sysdm.cpl`
-   - Go to **Advanced** tab → **Environment Variables**
-   - In **User variables**, select `Path` and click **Edit**
-   - Click **New** and add these paths (adjust Python version as needed):
-     ```
-     C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312
-     C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312\Scripts
-     ```
-   - Click **OK** in all windows and **restart your terminal**
+   - In the search bar, go to **Edit environment variables in this account**
+
+      ![alt text](img/image-5.png)
    
-   Find your Python path with:
-   ```powershell
-   python -c "import sys; print(sys.prefix)"
-   ```
+   - In **User variables**, select `Path` and click **Edit**
+
+      ![alt text](img/image-2.png)
+
+   - Click **New** and add your Python installation path. You can find your Python path with:
+      ```powershell
+      python -c "import sys; print(sys.prefix)"
+      ```
+
+      ![alt text](img/image-3.png)
+
+   - Click **OK** in all windows and **restart your terminal**
+
 
 3. **Microsoft Visual C++ Build Tools**
    
@@ -59,7 +62,11 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    - Select **"Desktop development with C++"**
    - Click Install
 
-> If you have installed any of the prerequisites above (Python, Visual C++ Build Tools, or modified PATH), **restart your computer** before proceeding with the installation steps.
+   ![alt text](img/image-4.png)
+
+
+>[!WARNING]
+> If you have installed any of the prerequisites above (Python, Visual C++ Build Tools, or modified PATH), **restart your computer** before proceeding with the following installation steps.
 
 ### Installation Steps
 
@@ -133,13 +140,17 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    ```
    Then edit the `.env` file to set your Snowflake account details and path to your private key.
 
+   You can find your Snowflake account details in Snowsight > Profile > View Account Details:
+
+   ![alt text](img/image-7.png)
+
 ## Usage
 
 ### Running in VS Code with Github Copilot
 
 1. In VS Code, press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>, then search for **MCP: Open User Configuration**
 3. In this JSON, add a new server with the full path to your uv executable:
-   ```yaml
+   ```json
    "snowflake-mcp-server": {
       "command": "uv",
       "args": [
@@ -153,7 +164,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
 This is an example of how the entire JSON file should look like if you have only this MCP installed:
 
-   ```yaml
+   ```json
    {
       "servers": {
          "snowflake-mcp-server": {
@@ -172,7 +183,7 @@ This is an example of how the entire JSON file should look like if you have only
    
    Alternative option: explicitly specify the stdio transport:
    
-   ```yaml
+   ```json
    "snowflake-mcp-server": {
       "command": "uv",
       "args": [
@@ -197,6 +208,12 @@ and start prompting!
 <p align="center">
   <img src="img/image-1.png" alt="GitHub Copilot Configuration" width="50%">
 </p>
+
+5. Now, the only thing you have to do every time you want to use it is start the MCP server like this:
+
+![alt text](img/image-8.png)
+
+And just ask Copilot to query some data in Snowflake! 
 
 ## Available Tools
 
