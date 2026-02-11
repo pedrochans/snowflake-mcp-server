@@ -213,7 +213,7 @@ and start prompting!
 
 ![alt text](img/image-8.png)
 
-And just ask Copilot to query some data in Snowflake! 
+Authenticate, and just ask Copilot to query some data in Snowflake! 
 
 ## Available Tools
 
