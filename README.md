@@ -70,6 +70,8 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
 ### Installation Steps
 
+Follow the next steps by executing the commands in your terminal. **Preferably use cmd instead of powershell**.
+
 1. **Clone this repository**:
    ```bash
    git clone https://github.com/pedrochans/snowflake-mcp-server.git
@@ -77,10 +79,6 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    ```bash
    cd snowflake-mcp-server
    ```
-
-   Or, in VS Code in **Source Control Menu** (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd>), go to **Source Control Menu → Clone Repository → Clone from Github** → Paste the URL or use the search bar
-
-   <img src="img/clone-repository.png" alt="Clone Repository from GitHub" width="75%">
 
 2. **Install uv**:
    
@@ -100,13 +98,12 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
    uv venv
    ```
    
-   On Windows:
+   Activate the environment
    ```bash
+   # Windows:
    .venv\Scripts\activate
-   ```
-   
-   On macOS/Linux:
-   ```bash
+
+   # macOS/Linux:
    source .venv/bin/activate
    ```
    
@@ -130,17 +127,30 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 
    **For external browser authentication**:
    ```bash
+   # Linux:
    cp .env.browser.example .env
+
+   # Windows:
+   copy .env.browser.example .env
    ```
    Then edit the `.env` file to set your Snowflake account details.
 
    **For private key authentication**:
    ```bash
+   # Linux:
    cp .env.private_key.example .env
-   ```
-   Then edit the `.env` file to set your Snowflake account details and path to your private key.
 
-   You can find your Snowflake account details in Snowsight > Profile > View Account Details:
+   # Windows:
+   copy .env.private_key.example .env
+   ```
+
+   Then edit the `.env` file to set your Snowflake account details or path to your private key.
+
+   Use simple quotes  `'` , after editing the `.env` file, it should look like this, with your credentials:
+
+   ![alt text](img/image-9.png)
+
+   If you are lost in this step, you can find your Snowflake account details in Snowsight > Profile > View Account Details:
 
    ![alt text](img/image-7.png)
 
@@ -211,7 +221,8 @@ and start prompting!
 
 5. Now, the only thing you have to do every time you want to use it is start the MCP server like this:
 
-![alt text](img/image-8.png)
+   ![alt text](img/image-8.png)
+
 
 Authenticate, and just ask Copilot to query some data in Snowflake! 
 
