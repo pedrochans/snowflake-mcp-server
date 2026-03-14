@@ -409,7 +409,7 @@ async def handle_execute_query(
         # Validate that the query is read-only
         try:
             parsed_statements = sqlglot.parse(query, dialect="snowflake")
-            read_only_types = {"select", "show", "describe", "explain", "with"}
+            read_only_types = {"select", "show", "describe", "explain", "with", "use"}
 
             if not parsed_statements:
                 raise ParseError("Error: Could not parse SQL query")
@@ -429,7 +429,7 @@ async def handle_execute_query(
             return [
                 mcp_types.TextContent(
                     type="text",
-                    text=f"Error: Only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH queries are allowed for security reasons. {str(e)}",
+                    text=f"Error: Only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE queries are allowed for security reasons. {str(e)}",
                 )
             ]
 
@@ -622,13 +622,13 @@ def run_stdio_server() -> None:
                 ),
                 mcp_types.Tool(
                     name="execute_query",
-                    description="Execute read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH). Use SHOW for metadata (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA for object details, ACCOUNT_USAGE for audit data.",
+                    description="Execute read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH, USE). Use SHOW for metadata (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA for object details, ACCOUNT_USAGE for audit data.",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "SQL query to execute. Supports: SELECT, SHOW commands (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA queries, ACCOUNT_USAGE queries",
+                                "description": "SQL query to execute. Supports: SELECT, SHOW commands (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA queries, ACCOUNT_USAGE queries, USE statements",
                             },
                             "database": {
                                 "type": "string",
