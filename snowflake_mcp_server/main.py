@@ -449,9 +449,14 @@ async def handle_execute_query(
             current_db, current_schema = "Unknown", "Unknown"
         context_cursor.close()
 
-        # Ensure the query has a LIMIT clause to prevent large result sets
-        # Parse the query to check if it already has a LIMIT
-        if "LIMIT " not in query.upper():
+        # Only add LIMIT clause for SELECT/WITH queries (not USE/SHOW/DESCRIBE/EXPLAIN)
+        first_stmt_key = (
+            parsed_statements[0].key.lower()
+            if parsed_statements and parsed_statements[0] is not None and hasattr(parsed_statements[0], "key")
+            else ""
+        )
+        needs_limit = first_stmt_key in {"select", "with"}
+        if needs_limit and "LIMIT " not in query.upper():
             # Remove any trailing semicolon before adding the LIMIT clause
             query = query.rstrip().rstrip(";")
             query = f"{query} LIMIT {limit_rows};"
