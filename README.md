@@ -1,293 +1,234 @@
-# MCP Server for Snowflake
+# Snowflake MCP Server
 
-A Model Context Protocol (MCP) server for performing read-only operations against Snowflake databases. This tool enables Claude to securely query Snowflake data without modifying any information.
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-compatible-7B5CFF.svg)](https://modelcontextprotocol.io)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 
-This repository is a fork from [snowflake-mcp-server](https://github.com/dynamike/snowflake-mcp-server), from Michael Kania.
+A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that gives
+AI assistants **read-only** access to Snowflake. Ask questions in natural language;
+the assistant explores your databases, views and data — without ever modifying
+anything.
+
+Works with **Claude Code**, **Claude Desktop**, **GitHub Copilot CLI**, **VS Code**
+and any other MCP client, on **Windows, macOS and Linux**.
+
+> Fork of [dynamike/snowflake-mcp-server](https://github.com/dynamike/snowflake-mcp-server)
+> by Michael Kania, hardened for cross-platform and corporate (VPN / SSO) use.
+
+---
 
 ## Features
 
-- Flexible authentication to Snowflake using either:
-  - Service account authentication with private key
-  - External browser authentication for interactive sessions
-- Connection pooling with automatic background refresh to maintain persistent connections
-- Support for querying multiple views and databases in a single session
-- Support for multiple SQL statement types (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH)
-- MCP-compatible handlers for querying Snowflake data
-- Read-only operations with security checks to prevent data modification
-- Support for Python 3.12+
-- Stdio-based MCP server for easy integration with Claude Desktop
-- **Corporate SSL Certificate Support**: Automatically uses Windows certificate store for SSL connections, ensuring compatibility with corporate environments that use custom or self-signed certificates
+- 🔐 **Read-only by design** — only `SELECT`, `WITH`, `SHOW`, `DESCRIBE`, `EXPLAIN`
+  and `USE` are accepted; everything else is rejected before it reaches Snowflake.
+- 🛡️ **Injection-safe** — object identifiers are validated against an allow-list
+  before being used in queries.
+- 🔑 **Flexible auth** — external-browser SSO or service-account key-pair.
+- 💾 **SSO token caching** — after the first login the token is stored in the OS
+  credential store, so reconnects don't reopen a browser.
+- 🌐 **Corporate SSL / VPN friendly** — uses the operating system trust store on
+  every platform (Windows cert store, macOS Keychain, Linux CA bundle).
+- ♻️ **Connection pooling** with automatic background refresh.
+- ⚡ **Non-blocking** — queries run off the event loop so the server stays
+  responsive.
+
+## Available tools
+
+| Tool | Description | Required args | Optional args |
+|------|-------------|---------------|---------------|
+| `list_databases` | List accessible databases | — | — |
+| `list_views` | List views in a database/schema | `database` | `schema` |
+| `describe_view` | Columns + SQL definition of a view | `database`, `view_name` | `schema` |
+| `query_view` | Sample rows from a view | `database`, `view_name` | `schema`, `limit` (10) |
+| `execute_query` | Run a read-only SQL query | `query` | `database`, `schema`, `limit` (100) |
+
+`execute_query` also supports `SHOW` (TABLES/PIPES/TASKS/STREAMS/GRANTS/…),
+`INFORMATION_SCHEMA` and `SNOWFLAKE.ACCOUNT_USAGE` queries. A `LIMIT` is added
+automatically to row-returning queries when you don't provide one.
+
+---
+
+## Requirements
+
+- **Python 3.12+**
+- **[uv](https://docs.astral.sh/uv/)** (Python package/venv manager)
+- **Windows only:** [Microsoft Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  ("Desktop development with C++") for building native dependencies. macOS and
+  Linux install from prebuilt wheels with no extra tooling.
+
+<details>
+<summary>Installing Python & uv per platform</summary>
+
+```bash
+# macOS (Homebrew)
+brew install python@3.12 uv
+
+# Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh   # installs uv
+# use your distro package manager for Python 3.12+
+
+# Windows (PowerShell)
+winget install Python.Python.3.12
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+On Windows, after installing Python or the Build Tools, **restart your terminal**
+(or the machine) so `PATH` changes take effect.
+</details>
 
 ## Installation
 
-### Prerequisites
+```bash
+# 1. Clone
+git clone https://github.com/pedrochans/snowflake-mcp-server.git
+cd snowflake-mcp-server
 
-1. **Python 3.12 or higher**
-   
-   Install Python from [python.org](https://www.python.org/downloads/). During installation, **check "Add Python to PATH"**.
-   
-   Verify installation:
-   ```powershell
-   python --version
-   ```
+# 2. Create the virtual environment (Python 3.12)
+uv venv --python 3.12
 
-2. **Python in PATH**
-   
-   If Python is not recognized, add it to your PATH:
-   
-   - In the search bar, go to **Edit environment variables in this account**
+# 3. Activate it
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows (cmd/PowerShell)
 
-      ![alt text](img/image-5.png)
-   
-   - In **User variables**, select `Path` and click **Edit**
-
-      ![alt text](img/image-2.png)
-
-   - Click **New** and add your Python installation path. You can find your Python path with:
-      ```powershell
-      python -c "import sys; print(sys.prefix)"
-      ```
-
-      ![alt text](img/image-3.png)
-
-   - Click **OK** in all windows and **restart your terminal**
-
-
-3. **Microsoft Visual C++ Build Tools**
-   
-   Required for installing Python packages with native dependencies.
-   
-   Download and install from [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/):
-   - Run the installer
-   - Select **"Desktop development with C++"**
-   - Click Install
-
-   ![alt text](img/image-4.png)
-
-
->[!WARNING]
-> If you have installed any of the prerequisites above (Python, Visual C++ Build Tools, or modified PATH), **restart your computer** before proceeding with the following installation steps.
-
-### Installation Steps
-
-Follow the next steps by executing the commands in your terminal. **Preferably use cmd instead of powershell**.
-
-1. **Clone this repository**:
-   ```bash
-   git clone https://github.com/pedrochans/snowflake-mcp-server.git
-   ```   
-   ```bash
-   cd snowflake-mcp-server
-   ```
-
-2. **Install uv**:
-   
-   ```powershell
-   pip install uv
-   ```
-   
-   Verify installation:
-   ```powershell
-   uv --version
-   ```
-
-3. **Create a virtual environment and install the package**:
-   
-   Create a virtual environment with Python 3.12+:
-   ```bash
-   uv venv
-   ```
-   
-   Activate the environment
-   ```bash
-   # Windows:
-   .venv\Scripts\activate
-
-   # macOS/Linux:
-   source .venv/bin/activate
-   ```
-   
-   Install the package in editable mode:
-   ```bash
-   uv pip install -e .
-   ```
-   
-   **Verify the installation**:
-   ```powershell
-   # You should see snowflake-mcp-server listed
-   uv pip list
-   ```
-   
-   > [!NOTE]
-   > Si encuentras problemas de compatibilidad entre tu versión de Python y las librerías, pide ayuda a Copilot para encontrar versiones compatibles.
-
-4. **Configure your Snowflake credentials**:
-
-   Choose one of the provided example files based on your preferred authentication method:
-
-   **For external browser authentication**:
-   ```bash
-   # Linux:
-   cp .env.browser.example .env
-
-   # Windows:
-   copy .env.browser.example .env
-   ```
-   Then edit the `.env` file to set your Snowflake account details.
-
-   **For private key authentication**:
-   ```bash
-   # Linux:
-   cp .env.private_key.example .env
-
-   # Windows:
-   copy .env.private_key.example .env
-   ```
-
-   Then edit the `.env` file to set your Snowflake account details or path to your private key.
-
-   Use simple quotes  `'` , after editing the `.env` file, it should look like this, with your credentials:
-
-   ![alt text](img/image-9.png)
-
-   If you are lost in this step, you can find your Snowflake account details in Snowsight > Profile > View Account Details:
-
-   ![alt text](img/image-7.png)
-
-## Usage
-
-### Running in VS Code with Github Copilot
-
-1. In VS Code, press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>, then search for **MCP: Open User Configuration**
-3. In this JSON, add a new server with the full path to your uv executable:
-   ```json
-   "snowflake-mcp-server": {
-      "command": "uv",
-      "args": [
-         "--directory",
-         "/<path-to-code>/snowflake-mcp-server",
-         "run",
-         "snowflake-mcp"
-      ]
-   }
-   ```
-
-This is an example of how the entire JSON file should look like if you have only this MCP installed:
-
-   ```json
-   {
-      "servers": {
-         "snowflake-mcp-server": {
-            "command": "uv",
-            "args": [
-               "--directory",
-               "/<path-to-code>/snowflake-mcp-server",
-               "run",
-               "snowflake-mcp"
-            ]
-         }
-      },
-      "inputs": []
-   }
-   ```
-   
-   Alternative option: explicitly specify the stdio transport:
-   
-   ```json
-   "snowflake-mcp-server": {
-      "command": "uv",
-      "args": [
-         "--directory",
-         "/<path-to-code>/snowflake-mcp-server",
-         "run",
-         "snowflake-mcp-stdio"
-      ]
-   }
-   ```
-3. After that, click on **Start** or **Restart**
-
-   <img src="img/mcp-run-restart.png" alt="MCP Server Run/Restart" width="50%">
-   
-   When using external browser authentication, a browser window will automatically open prompting you to log in to your Snowflake account.
-
-4. If everything is OK, you will see the message: **"Discovered 5 tools"**
-
-Now you can go to GitHub Copilot chat, ensure that the new Tool is available in **Agent mode → Configure Tools**,
-and start prompting!
-
-<p align="center">
-  <img src="img/image-1.png" alt="GitHub Copilot Configuration" width="50%">
-</p>
-
-5. Now, the only thing you have to do every time you want to use it is start the MCP server like this:
-
-   ![alt text](img/image-8.png)
-
-
-Authenticate, and just ask Copilot to query some data in Snowflake! 
-
-## Available Tools
-
-The server provides the following tools for querying Snowflake:
-
-- **list_databases**: List all accessible Snowflake databases
-- **list_views**: List all views in a specified database and schema
-- **describe_view**: Get detailed information about a specific view including columns and SQL definition
-- **query_view**: Query data from a view with an optional row limit
-- **execute_query**: Execute custom read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH) with results formatted as markdown tables. Supports:
-  - SHOW commands for metadata (TABLES, PIPES, TASKS, STREAMS, GRANTS, PROCEDURES, FUNCTIONS, etc.)
-  - INFORMATION_SCHEMA queries for detailed object metadata
-  - SNOWFLAKE.ACCOUNT_USAGE queries for historical and audit data (requires permissions)
-
-### Example Queries
-
-When using with VS Code, you can ask questions like:
-
-- "Can you list all the databases in my Snowflake account?"
-- "List all views in the MARKETING database"
-- "Describe the structure of the CUSTOMER_ANALYTICS view in the SALES database"
-- "Show me sample data from the REVENUE_BY_REGION view in the FINANCE database"
-- "Run this SQL query: SELECT customer_id, SUM(order_total) as total_spend FROM SALES.ORDERS GROUP BY customer_id ORDER BY total_spend DESC LIMIT 10"
-- "Query the MARKETING database to find the top 5 performing campaigns by conversion rate"
-- "Compare data from views in different databases by querying SALES.CUSTOMER_METRICS and MARKETING.CAMPAIGN_RESULTS"
-- "Show me all tables in the SALES schema"
-- "Find all columns named 'customer_id' across all tables in the database"
-- "Show me all stored procedures in the ETL schema"
-- "List all pipes that load data into the RAW_DATA database"
-- "Show the query history for the last hour"
-- "What tasks are scheduled to run in this database?"
-
-### Configuration
-
-Connection pooling behavior can be configured through environment variables:
-
-- `SNOWFLAKE_CONN_REFRESH_HOURS`: Time interval in hours between connection refreshes (default: 8)
-
-Example `.env` configuration:
-```
-# Set connection to refresh every 4 hours
-SNOWFLAKE_CONN_REFRESH_HOURS=4
+# 4. Install the package
+uv pip install -e .
 ```
 
-## Security Considerations
+Verify: `uv pip list` should show `snowflake-mcp-server`.
 
-This server:
-- Enforces read-only operations (only SELECT, SHOW, DESCRIBE, EXPLAIN, and WITH statements are allowed)
-- Automatically adds LIMIT clauses to prevent large result sets
-- Uses secure authentication methods for connections to Snowflake
-- Validates inputs to prevent SQL injection
+## Configuration
 
-⚠️ **Important**: Keep your `.env` file secure and never commit it to version control. The `.gitignore` file is configured to exclude it.
+Copy the example that matches your authentication method and edit it:
+
+```bash
+cp .env.browser.example .env        # external browser (SSO)
+# cp .env.private_key.example .env  # service account key-pair
+```
+
+### External browser (SSO)
+
+```dotenv
+SNOWFLAKE_AUTH_TYPE=external_browser
+SNOWFLAKE_ACCOUNT='ORG-ACCOUNT'
+SNOWFLAKE_USER='you@company.com'
+SNOWFLAKE_WAREHOUSE='YOUR_WH'
+SNOWFLAKE_DATABASE='YOUR_DB'
+SNOWFLAKE_SCHEMA='YOUR_SCHEMA'
+SNOWFLAKE_ROLE='YOUR_ROLE'
+SNOWFLAKE_CONN_REFRESH_HOURS=8
+```
+
+A browser window opens on first launch to complete the login. The token is then
+cached, so you won't be prompted again until it expires.
+
+### Private key (service account)
+
+```dotenv
+SNOWFLAKE_AUTH_TYPE=private_key
+SNOWFLAKE_ACCOUNT='ORG-ACCOUNT'
+SNOWFLAKE_USER='service_account'
+SNOWFLAKE_PRIVATE_KEY_PATH=/absolute/path/to/rsa_key.p8
+SNOWFLAKE_WAREHOUSE='YOUR_WH'
+SNOWFLAKE_DATABASE='YOUR_DB'
+SNOWFLAKE_SCHEMA='YOUR_SCHEMA'
+SNOWFLAKE_ROLE='YOUR_ROLE'
+```
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SNOWFLAKE_AUTH_TYPE` | yes | `private_key` | `external_browser` or `private_key` |
+| `SNOWFLAKE_ACCOUNT` | yes | — | Account identifier (e.g. `ORG-ACCOUNT`) |
+| `SNOWFLAKE_USER` | yes | — | Username / email |
+| `SNOWFLAKE_PRIVATE_KEY_PATH` | key auth | — | Absolute path to the `.p8` key |
+| `SNOWFLAKE_WAREHOUSE` | no | — | Warehouse |
+| `SNOWFLAKE_DATABASE` | no | — | Default database |
+| `SNOWFLAKE_SCHEMA` | no | — | Default schema |
+| `SNOWFLAKE_ROLE` | no | — | Role |
+| `SNOWFLAKE_CONN_REFRESH_HOURS` | no | `8` | Hours between connection refreshes |
+
+> Find your account details in Snowsight → Profile → **View Account Details**.
+>
+> ⚠️ Never commit `.env` — it is already in `.gitignore`.
+
+---
+
+## Connect your client
+
+The server runs the same way for every client:
+
+```bash
+uv --directory /ABSOLUTE/PATH/TO/snowflake-mcp-server run snowflake-mcp
+```
+
+**Quickstart for Claude Code:**
+
+```bash
+claude mcp add snowflake-mcp-server -- \
+  uv --directory /ABSOLUTE/PATH/TO/snowflake-mcp-server run snowflake-mcp
+claude mcp list      # snowflake-mcp-server ✓ Connected
+```
+
+Full, copy-pasteable setup for **Claude Code, Claude Desktop, GitHub Copilot CLI
+and VS Code** — plus ready-made config files — is in
+**[docs/clients.md](docs/clients.md)** and **[examples/clients/](examples/clients)**.
+
+### Example prompts
+
+- "List all databases in my Snowflake account."
+- "List the views in the `FINANCE` database."
+- "Describe the `CUSTOMER_ANALYTICS` view in `SALES`."
+- "Show me 20 rows from the `REVENUE_BY_REGION` view in `FINANCE`."
+- "Run: `SELECT region, SUM(total) FROM SALES.ORDERS GROUP BY region ORDER BY 2 DESC`."
+- "Show all tables in the `ETL` schema."
+
+---
+
+## Security
+
+- Enforces read-only statements; identifiers are validated to prevent injection.
+- Adds `LIMIT` clauses automatically to cap result sizes.
+- Effective permissions are still bounded by the Snowflake **role** you configure —
+  grant it the minimum it needs.
+- Credentials live only in your local `.env` (or your client's `env` block).
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Client can't find `uv` | Use the absolute path to `uv` (`which uv` / `where uv`) as the `command` in the client config. GUI apps often have a minimal `PATH`. |
+| Browser doesn't open on **WSL** | Install `wslu` and `export BROWSER=wslview`, or use private-key auth. |
+| Headless Linux server | No browser available — use private-key auth. |
+| `pip`/build errors on Windows | Install the Visual C++ Build Tools and restart. |
+| Corporate TLS / VPN errors | The server already uses the OS trust store; make sure your corporate root CA is installed there. |
+| Repeated SSO popups | Ensure `keyring` is installed (it is, via the `secure-local-storage` extra) so the token can be cached. |
+
+## Development
+
+```bash
+uv pip install -e ".[dev]"
+pytest            # tests
+ruff check .      # lint
+ruff format .     # format
+mypy snowflake_mcp_server/   # type check
+```
+
+Want to add a tool? See `snowflake_mcp_server/utils/template.py` for starter
+templates and register the handler in `snowflake_mcp_server/main.py`.
+
+## Tech stack
+
+[snowflake-connector-python](https://docs.snowflake.com/en/developer-guide/python-connector/python-connector) ·
+[MCP](https://modelcontextprotocol.io) ·
+[Pydantic](https://docs.pydantic.dev/) ·
+[sqlglot](https://github.com/tobymao/sqlglot) ·
+[pip-system-certs](https://pypi.org/project/pip-system-certs/) ·
+[python-dotenv](https://github.com/theskumar/python-dotenv)
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Issues and pull requests are welcome. Run the checks above before opening a PR.
 
-## Technical Details
+## License
 
-This project uses:
-- [Snowflake Connector Python](https://docs.snowflake.com/en/developer-guide/python-connector/python-connector) for connecting to Snowflake
-- [MCP (Model Context Protocol)](https://github.com/anthropics/anthropic-cookbook/tree/main/mcp) for interacting with Claude
-- [Pydantic](https://docs.pydantic.dev/) for data validation
-- [python-dotenv](https://github.com/theskumar/python-dotenv) for environment variable management
-- [pip-system-certs](https://pypi.org/project/pip-system-certs/) for corporate SSL certificate support on Windows
+[MIT](LICENSE)
