@@ -10,14 +10,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
-    "snowflake-connector-python>=3.8.0",
-    "pydantic>=2.4.2",
+    "snowflake-connector-python[secure-local-storage]>=4.6.0",
+    "pydantic>=2.11.0",
     "python-dotenv>=1.0.0",
-    "cryptography>=41.0.0",
-    "mcp",
-    "anyio>=3.7.1",
-    "sqlglot>=11.5.5",
-    "pip-system-certs>=4.0"
+    "cryptography>=44.0.0",
+    "mcp>=1.27.0",
+    "anyio>=4.13.0",
+    "sqlglot>=30.0.0",
+    "pip-system-certs>=5.0"
 ]
 
 [project.scripts]
@@ -45,6 +45,12 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+
+# pip-system-certs ships no type stubs / py.typed marker; it is imported purely
+# for its SSL side effect, so silence the missing-stubs noise.
+[[tool.mypy.overrides]]
+module = ["pip_system_certs.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -92,3 +92,6 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Agent / tooling local state
+.omc/

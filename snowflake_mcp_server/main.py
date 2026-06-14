@@ -10,25 +10,31 @@ The server is designed to be used with Claude Desktop as an MCP server, providin
 Claude with secure, controlled access to Snowflake data for analysis and reporting.
 """
 
-# Import pip-system-certs first to ensure SSL uses Windows certificate store
-# This is crucial for corporate environments with custom SSL certificates
-import pip_system_certs.wrapt_requests  # noqa: F401
+# pip-system-certs patches the SSL stack to use the operating system trust
+# store (Windows cert store, macOS keychain, Linux CA bundle). Import it before
+# snowflake.connector so corporate / VPN TLS interception works on every OS.
+import pip_system_certs.wrapt_requests  # noqa: F401  # isort: skip
 
 import os
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 import anyio
 import mcp.types as mcp_types
-import sqlglot
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from sqlglot.errors import ParseError
+from snowflake.connector import SnowflakeConnection
 
 from snowflake_mcp_server.utils.snowflake_conn import (
     AuthType,
     SnowflakeConfig,
     connection_manager,
+)
+from snowflake_mcp_server.utils.sql_guard import (
+    ReadOnlyViolation,
+    assert_read_only,
+    first_statement_verb,
+    validate_identifier,
 )
 
 # Load environment variables from .env file
@@ -85,16 +91,51 @@ def create_server() -> Server:
     return server
 
 
+# Shared return type for all tool handlers
+ToolResult = Sequence[
+    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
+]
+
+
+async def _run_db(
+    arguments: Optional[Dict[str, Any]],
+    impl: Callable[[SnowflakeConnection, Optional[Dict[str, Any]]], ToolResult],
+) -> ToolResult:
+    """Run a synchronous tool implementation off the event loop.
+
+    The blocking Snowflake work is executed in a worker thread, and the whole
+    operation runs under the connection manager's lock so concurrent tool calls
+    cannot corrupt the shared connection's session state.
+    """
+
+    def work() -> ToolResult:
+        try:
+            return connection_manager.run_with_connection(
+                lambda conn: impl(conn, arguments)
+            )
+        except Exception as e:
+            return [
+                mcp_types.TextContent(
+                    type="text", text=f"Error connecting to Snowflake: {str(e)}"
+                )
+            ]
+
+    return await anyio.to_thread.run_sync(work)
+
+
 # Snowflake query handler functions
 async def handle_list_databases(
     name: str, arguments: Optional[Dict[str, Any]] = None
-) -> Sequence[
-    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
-]:
+) -> ToolResult:
     """Tool handler to list all accessible Snowflake databases."""
+    return await _run_db(arguments, _list_databases_impl)
+
+
+def _list_databases_impl(
+    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
+) -> ToolResult:
+    """Synchronous implementation; runs in a worker thread under the lock."""
     try:
-        # Get Snowflake connection from connection manager
-        conn = connection_manager.get_connection()
 
         # Execute query
         cursor = conn.cursor()
@@ -126,15 +167,18 @@ async def handle_list_databases(
 
 async def handle_list_views(
     name: str, arguments: Optional[Dict[str, Any]] = None
-) -> Sequence[
-    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
-]:
+) -> ToolResult:
     """Tool handler to list views in a specified database and schema."""
-    try:
-        # Get Snowflake connection from connection manager
-        conn = connection_manager.get_connection()
+    return await _run_db(arguments, _list_views_impl)
 
-        # Extract arguments
+
+def _list_views_impl(
+    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
+) -> ToolResult:
+    """Synchronous implementation; runs in a worker thread under the lock."""
+    try:
+
+        # Extract and validate arguments
         database = arguments.get("database") if arguments else None
         schema = arguments.get("schema") if arguments else None
 
@@ -145,38 +189,35 @@ async def handle_list_views(
                 )
             ]
 
-        # Use the provided database and schema, or use default schema
-        if database:
-            conn.cursor().execute(f"USE DATABASE {database}")
+        database = validate_identifier(database, "database")
         if schema:
-            conn.cursor().execute(f"USE SCHEMA {schema}")
-        else:
-            # Get the current schema
-            cursor = conn.cursor()
-            cursor.execute("SELECT CURRENT_SCHEMA()")
-            schema_result = cursor.fetchone()
-            if schema_result:
-                schema = schema_result[0]
+            schema = validate_identifier(schema, "schema")
+
+        # Switch context, resolving the current schema when none was provided
+        with conn.cursor() as cursor:
+            cursor.execute(f"USE DATABASE {database}")
+            if schema:
+                cursor.execute(f"USE SCHEMA {schema}")
             else:
-                return [
-                    mcp_types.TextContent(
-                        type="text", text="Error: Could not determine current schema"
-                    )
-                ]
+                cursor.execute("SELECT CURRENT_SCHEMA()")
+                schema_result = cursor.fetchone()
+                if not schema_result or not schema_result[0]:
+                    return [
+                        mcp_types.TextContent(
+                            type="text",
+                            text="Error: Could not determine current schema",
+                        )
+                    ]
+                schema = schema_result[0]
 
         # Execute query to list views
-        cursor = conn.cursor()
-        cursor.execute(f"SHOW VIEWS IN {database}.{schema}")
-
-        # Process results
         views = []
-        for row in cursor:
-            view_name = row[1]  # View name is in the second column
-            created_on = row[5]  # Creation date
-            views.append(f"{view_name} (created: {created_on})")
-
-        cursor.close()
-        # Don't close the connection, just the cursor
+        with conn.cursor() as cursor:
+            cursor.execute(f"SHOW VIEWS IN {database}.{schema}")
+            for row in cursor:
+                view_name = row[1]  # View name is in the second column
+                created_on = row[5]  # Creation date
+                views.append(f"{view_name} (created: {created_on})")
 
         if views:
             return [
@@ -200,13 +241,16 @@ async def handle_list_views(
 
 async def handle_describe_view(
     name: str, arguments: Optional[Dict[str, Any]] = None
-) -> Sequence[
-    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
-]:
+) -> ToolResult:
     """Tool handler to describe the structure of a view."""
+    return await _run_db(arguments, _describe_view_impl)
+
+
+def _describe_view_impl(
+    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
+) -> ToolResult:
+    """Synchronous implementation; runs in a worker thread under the lock."""
     try:
-        # Get Snowflake connection from connection manager
-        conn = connection_manager.get_connection()
 
         # Extract arguments
         database = arguments.get("database") if arguments else None
@@ -221,43 +265,41 @@ async def handle_describe_view(
                 )
             ]
 
-        # Use the provided schema or use default schema
+        database = validate_identifier(database, "database")
+        view_name = validate_identifier(view_name, "view_name")
+
+        # Use the provided schema or resolve the current one
         if schema:
-            full_view_name = f"{database}.{schema}.{view_name}"
+            schema = validate_identifier(schema, "schema")
         else:
-            # Get the current schema
-            cursor = conn.cursor()
-            cursor.execute("SELECT CURRENT_SCHEMA()")
-            schema_result = cursor.fetchone()
-            if schema_result:
-                schema = schema_result[0]
-                full_view_name = f"{database}.{schema}.{view_name}"
-            else:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT CURRENT_SCHEMA()")
+                schema_result = cursor.fetchone()
+            if not schema_result or not schema_result[0]:
                 return [
                     mcp_types.TextContent(
                         type="text", text="Error: Could not determine current schema"
                     )
                 ]
+            schema = schema_result[0]
 
-        # Execute query to describe view
-        cursor = conn.cursor()
-        cursor.execute(f"DESCRIBE VIEW {full_view_name}")
+        full_view_name = f"{database}.{schema}.{view_name}"
 
-        # Process results
+        # Describe the view and fetch its definition
         columns = []
-        for row in cursor:
-            col_name = row[0]
-            col_type = row[1]
-            col_null = "NULL" if row[3] == "Y" else "NOT NULL"
-            columns.append(f"{col_name} : {col_type} {col_null}")
+        with conn.cursor() as cursor:
+            cursor.execute(f"DESCRIBE VIEW {full_view_name}")
+            for row in cursor:
+                col_name = row[0]
+                col_type = row[1]
+                col_null = "NULL" if row[3] == "Y" else "NOT NULL"
+                columns.append(f"{col_name} : {col_type} {col_null}")
 
-        # Get view definition
-        cursor.execute(f"SELECT GET_DDL('VIEW', '{full_view_name}')")
-        view_ddl_result = cursor.fetchone()
-        view_ddl = view_ddl_result[0] if view_ddl_result else "Definition not available"
-
-        cursor.close()
-        # Don't close the connection, just the cursor
+            cursor.execute(f"SELECT GET_DDL('VIEW', '{full_view_name}')")
+            view_ddl_result = cursor.fetchone()
+            view_ddl = (
+                view_ddl_result[0] if view_ddl_result else "Definition not available"
+            )
 
         if columns:
             result = f"## View: {full_view_name}\n\n"
@@ -286,13 +328,16 @@ async def handle_describe_view(
 
 async def handle_query_view(
     name: str, arguments: Optional[Dict[str, Any]] = None
-) -> Sequence[
-    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
-]:
+) -> ToolResult:
     """Tool handler to query data from a view with optional limit."""
+    return await _run_db(arguments, _query_view_impl)
+
+
+def _query_view_impl(
+    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
+) -> ToolResult:
+    """Synchronous implementation; runs in a worker thread under the lock."""
     try:
-        # Get Snowflake connection from connection manager
-        conn = connection_manager.get_connection()
 
         # Extract arguments
         database = arguments.get("database") if arguments else None
@@ -312,38 +357,33 @@ async def handle_query_view(
                 )
             ]
 
-        # Use the provided schema or use default schema
+        database = validate_identifier(database, "database")
+        view_name = validate_identifier(view_name, "view_name")
+
+        # Use the provided schema or resolve the current one
         if schema:
-            full_view_name = f"{database}.{schema}.{view_name}"
+            schema = validate_identifier(schema, "schema")
         else:
-            # Get the current schema
-            cursor = conn.cursor()
-            cursor.execute("SELECT CURRENT_SCHEMA()")
-            schema_result = cursor.fetchone()
-            if schema_result:
-                schema = schema_result[0]
-                full_view_name = f"{database}.{schema}.{view_name}"
-            else:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT CURRENT_SCHEMA()")
+                schema_result = cursor.fetchone()
+            if not schema_result or not schema_result[0]:
                 return [
                     mcp_types.TextContent(
                         type="text", text="Error: Could not determine current schema"
                     )
                 ]
+            schema = schema_result[0]
+
+        full_view_name = f"{database}.{schema}.{view_name}"
 
         # Execute query to get data from view
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT * FROM {full_view_name} LIMIT {limit}")
-
-        # Get column names
-        column_names = (
-            [col[0] for col in cursor.description] if cursor.description else []
-        )
-
-        # Process results
-        rows = cursor.fetchall()
-
-        cursor.close()
-        # Don't close the connection, just the cursor
+        with conn.cursor() as cursor:
+            cursor.execute(f"SELECT * FROM {full_view_name} LIMIT {limit}")
+            column_names = (
+                [col[0] for col in cursor.description] if cursor.description else []
+            )
+            rows = cursor.fetchall()
 
         if rows:
             # Format the results as a markdown table
@@ -381,13 +421,16 @@ async def handle_query_view(
 
 async def handle_execute_query(
     name: str, arguments: Optional[Dict[str, Any]] = None
-) -> Sequence[
-    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
-]:
+) -> ToolResult:
     """Tool handler to execute read-only SQL queries against Snowflake."""
+    return await _run_db(arguments, _execute_query_impl)
+
+
+def _execute_query_impl(
+    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
+) -> ToolResult:
+    """Synchronous implementation; runs in a worker thread under the lock."""
     try:
-        # Get Snowflake connection from connection manager
-        conn = connection_manager.get_connection()
 
         # Extract arguments
         query = arguments.get("query") if arguments else None
@@ -406,76 +449,54 @@ async def handle_execute_query(
                 )
             ]
 
-        # Validate that the query is read-only
+        # Validate that the query is read-only (raises ReadOnlyViolation)
         try:
-            parsed_statements = sqlglot.parse(query, dialect="snowflake")
-            read_only_types = {"select", "show", "describe", "explain", "with", "use"}
-
-            if not parsed_statements:
-                raise ParseError("Error: Could not parse SQL query")
-
-            for stmt in parsed_statements:
-                if (
-                    stmt is not None
-                    and hasattr(stmt, "key")
-                    and stmt.key
-                    and stmt.key.lower() not in read_only_types
-                ):
-                    raise ParseError(
-                        f"Error: Only read-only queries are allowed. Found statement type: {stmt.key}"
-                    )
-
-        except ParseError as e:
+            assert_read_only(query)
+        except ReadOnlyViolation as e:
             return [
                 mcp_types.TextContent(
                     type="text",
-                    text=f"Error: Only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE queries are allowed for security reasons. {str(e)}",
+                    text=(
+                        "Error: Only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE queries "
+                        f"are allowed for security reasons. {str(e)}"
+                    ),
                 )
             ]
 
-        # Use the specified database and schema if provided
+        # Validate optional context identifiers before interpolation
         if database:
-            conn.cursor().execute(f"USE DATABASE {database}")
+            database = validate_identifier(database, "database")
         if schema:
-            conn.cursor().execute(f"USE SCHEMA {schema}")
+            schema = validate_identifier(schema, "schema")
 
-        # Extract database and schema context info for logging/display
-        context_cursor = conn.cursor()
-        context_cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
-        context_result = context_cursor.fetchone()
+        # Switch context (if requested) and read it back for display
+        with conn.cursor() as context_cursor:
+            if database:
+                context_cursor.execute(f"USE DATABASE {database}")
+            if schema:
+                context_cursor.execute(f"USE SCHEMA {schema}")
+            context_cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
+            context_result = context_cursor.fetchone()
         if context_result:
             current_db, current_schema = context_result
         else:
             current_db, current_schema = "Unknown", "Unknown"
-        context_cursor.close()
 
-        # Only add LIMIT clause for SELECT/WITH queries (not USE/SHOW/DESCRIBE/EXPLAIN)
-        first_stmt_key = (
-            parsed_statements[0].key.lower()
-            if parsed_statements and parsed_statements[0] is not None and hasattr(parsed_statements[0], "key")
-            else ""
-        )
-        needs_limit = first_stmt_key in {"select", "with"}
+        # Only add a LIMIT clause for row-returning queries (SELECT/WITH)
+        needs_limit = first_statement_verb(query) in {"select", "with"}
         if needs_limit and "LIMIT " not in query.upper():
             # Remove any trailing semicolon before adding the LIMIT clause
             query = query.rstrip().rstrip(";")
             query = f"{query} LIMIT {limit_rows};"
 
         # Execute the query
-        cursor = conn.cursor()
-        cursor.execute(query)
-
-        # Get column names and types
-        column_names = (
-            [col[0] for col in cursor.description] if cursor.description else []
-        )
-
-        # Fetch only up to limit_rows
-        rows = cursor.fetchmany(limit_rows)
+        with conn.cursor() as cursor:
+            cursor.execute(query)
+            column_names = (
+                [col[0] for col in cursor.description] if cursor.description else []
+            )
+            rows = cursor.fetchmany(limit_rows)
         row_count = len(rows) if rows else 0
-
-        cursor.close()
-        # Don't close the connection, just the cursor
 
         if rows:
             # Format the results as a markdown table

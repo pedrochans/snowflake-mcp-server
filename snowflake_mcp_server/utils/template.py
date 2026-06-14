@@ -9,8 +9,8 @@ from typing import Any, Dict, List
 
 import mcp.types as mcp_types
 
-from mcp_server_snowflake.main import get_snowflake_config
-from mcp_server_snowflake.utils.snowflake_conn import (
+from snowflake_mcp_server.main import get_snowflake_config
+from snowflake_mcp_server.utils.snowflake_conn import (
     get_snowflake_connection,
 )
 

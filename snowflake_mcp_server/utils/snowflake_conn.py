@@ -13,9 +13,10 @@ The primary components are:
   auth or browser auth
 """
 
-# Import pip-system-certs first to ensure SSL uses Windows certificate store
-# This is crucial for corporate environments with custom SSL certificates
-import pip_system_certs.wrapt_requests  # noqa: F401
+# pip-system-certs patches the SSL stack to use the operating system trust
+# store (Windows cert store, macOS keychain, Linux CA bundle). Import it before
+# snowflake.connector so corporate / VPN TLS interception works on every OS.
+import pip_system_certs.wrapt_requests  # noqa: F401  # isort: skip
 
 import contextlib
 import os
@@ -23,7 +24,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, TypeVar
 
 import snowflake.connector
 from cryptography.hazmat.backends import default_backend
@@ -32,6 +33,8 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from pydantic import BaseModel, ValidationInfo, field_validator
 from snowflake.connector import SnowflakeConnection
 from snowflake.connector.errors import DatabaseError, OperationalError
+
+_T = TypeVar("_T")
 
 
 class AuthType(str, Enum):
@@ -169,6 +172,33 @@ class SnowflakeConnectionManager:
             ), "Connection is None after connect attempt"
             return self._connection
 
+    def run_with_connection(
+        self, operation: Callable[[SnowflakeConnection], _T]
+    ) -> _T:
+        """Run ``operation(connection)`` while holding the connection lock.
+
+        This is the single serialization gate for all database access. Holding
+        the lock for the whole operation guarantees that:
+
+        * two tool handlers cannot interleave session state (e.g. ``USE``) on
+          the shared connection, and
+        * the background refresh thread cannot swap the connection underneath an
+          in-flight query.
+
+        The callable runs synchronously in the caller's thread, so callers must
+        invoke this from a worker thread (e.g. ``anyio.to_thread.run_sync``) to
+        avoid blocking the event loop.
+        """
+        with self._connection_lock:
+            if self._connection is None or not self._connection_healthy:
+                if self._config is None:
+                    raise ValueError(
+                        "Connection manager not initialized with a configuration"
+                    )
+                self._connect()
+            assert self._connection is not None
+            return operation(self._connection)
+
     def is_healthy(self) -> Tuple[bool, Optional[str]]:
         """Check if the connection is healthy.
 
@@ -295,6 +325,11 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
         conn_params["private_key"] = private_key
     elif config.auth_type == AuthType.EXTERNAL_BROWSER:
         conn_params["authenticator"] = "externalbrowser"
+        # Persist the SSO id token in the OS credential store (Keychain /
+        # Windows Credential Manager / libsecret) so reconnects and the
+        # periodic refresh do not pop a browser window every time. Requires the
+        # keyring extra (snowflake-connector-python[secure-local-storage]).
+        conn_params["client_store_temporary_credential"] = True
 
     # Add optional connection parameters
     if config.warehouse:
