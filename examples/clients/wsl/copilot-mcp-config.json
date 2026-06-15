@@ -1,14 +1,16 @@
 {
   "mcpServers": {
     "snowflake-mcp-server": {
-      "type": "stdio",
+      "type": "local",
       "command": "uv",
       "args": [
         "--directory",
-        "/ABSOLUTE/PATH/TO/snowflake-mcp-server",
+        "/home/USER/path/to/snowflake-mcp-server",
         "run",
         "snowflake-mcp"
-      ]
+      ],
+      "env": {},
+      "tools": ["*"]
     }
   }
 }

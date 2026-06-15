@@ -9,10 +9,19 @@ uv --directory /ABSOLUTE/PATH/TO/snowflake-mcp-server run snowflake-mcp
 
 (`snowflake-mcp-stdio` is an equivalent alias.)
 
-Ready-to-copy config files live in [`examples/clients/`](../examples/clients).
-Replace `/ABSOLUTE/PATH/TO/snowflake-mcp-server` with the real absolute path on
-your machine, and make sure you have created your `.env` first (see the main
-[README](../README.md)).
+Ready-to-edit config files live in [`examples/clients/`](../examples/clients),
+organised per platform:
+
+```
+examples/clients/
+├── macos/      claude-code.mcp.json · copilot-mcp-config.json · vscode-mcp.json
+├── linux/      claude-code.mcp.json · copilot-mcp-config.json · vscode-mcp.json
+├── windows/    claude-code.mcp.json · copilot-mcp-config.json · vscode-mcp.json
+└── wsl/        claude-code.mcp.json · copilot-mcp-config.json · vscode-mcp.json
+```
+
+In every file, replace `USER` and `path/to/snowflake-mcp-server` with your real
+absolute path, and create your `.env` first (see the main [README](../README.md)).
 
 > On first launch a browser window opens for external-browser authentication.
 > After the first successful login the SSO token is cached in the OS credential
@@ -21,88 +30,111 @@ your machine, and make sure you have created your `.env` first (see the main
 
 ---
 
-## Claude Code (CLI)
+## What differs between platforms
 
-One command (local scope, only for you):
+Only two things change across platforms — the rest of the JSON is identical:
+
+| | `command` | `--directory` |
+|---|---|---|
+| **macOS** | `uv` (CLIs) / `/opt/homebrew/bin/uv` (GUI) | `/Users/USER/...` |
+| **Linux** | `uv` (CLIs) / `/home/USER/.local/bin/uv` (GUI) | `/home/USER/...` |
+| **Windows** | `uv` (CLIs) / `C:\\Users\\USER\\.local\\bin\\uv.exe` (GUI) | `C:/Users/USER/...` |
+| **WSL** | `uv` (CLIs, inside WSL) / `wsl.exe` (VS Code on Windows host) | `/home/USER/...` |
+
+Why two `command` values per OS:
+
+- **CLI clients** (Claude Code, Copilot CLI) run in your terminal and inherit
+  your shell `PATH`, so plain `uv` works.
+- **GUI clients** (VS Code, Claude Desktop) launch with a minimal `PATH` and
+  often can't find `uv` — use the **absolute path** to the `uv` binary. Find it
+  with `which uv` (macOS/Linux/WSL), `where uv` (Windows cmd) or
+  `(Get-Command uv).Source` (PowerShell).
+
+---
+
+## Per-client notes
+
+### Claude Code (CLI)
+
+One command (local scope):
 
 ```bash
 claude mcp add snowflake-mcp-server -- \
   uv --directory /ABSOLUTE/PATH/TO/snowflake-mcp-server run snowflake-mcp
 ```
 
-Project scope (writes a `.mcp.json` that can be shared with the team):
+Project scope (writes a shareable `.mcp.json` at the repo root):
 
 ```bash
 claude mcp add --scope project snowflake-mcp-server -- \
   uv --directory /ABSOLUTE/PATH/TO/snowflake-mcp-server run snowflake-mcp
 ```
 
-Or create `.mcp.json` at the repo root manually — see
-[`examples/clients/claude-code.mcp.json`](../examples/clients/claude-code.mcp.json).
+Or copy the matching `claude-code.mcp.json` to your repo root as `.mcp.json`.
+Verify: `claude mcp list` → `✓ Connected`. Inside a session, `/mcp`.
 
-Verify:
+Key/field: top-level `mcpServers`, `"type": "stdio"`.
 
-```bash
-claude mcp list      # should show: snowflake-mcp-server ✓ Connected
-```
-Inside a session, `/mcp` lists the server and its tools.
+### GitHub Copilot CLI
 
----
+Run `/mcp add` in the CLI (Server Type → **Local**, Tools → `*`), or edit
+`~/.copilot/mcp-config.json` using the matching `copilot-mcp-config.json`.
+Verify with `/mcp show`. Relocate the config dir with `COPILOT_HOME`.
 
-## Claude Desktop
+Key/fields: top-level `mcpServers`, **`"type": "local"`** and **`"tools": ["*"]`**.
 
-Edit `claude_desktop_config.json` and add the `mcpServers` entry from
-[`examples/clients/claude_desktop_config.json`](../examples/clients/claude_desktop_config.json),
-then restart Claude Desktop.
+### VS Code (GitHub Copilot, Agent mode)
 
-Config file location:
+`Ctrl/Cmd + Shift + P` → **MCP: Open User Configuration**, then paste the
+matching `vscode-mcp.json`. Click **Start** / **Restart**; when it reports
+*"Discovered 5 tools"* enable it in **Agent mode → Configure Tools**.
 
-| OS | Path |
-|----|------|
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
+Key/field: top-level **`servers`** (not `mcpServers`), `"type": "stdio"`.
 
 ---
 
-## GitHub Copilot CLI
+## WSL specifics
 
-Either run `/mcp add` inside the CLI and fill the form (Server Type → **Local**,
-Tools → `*`), or edit `~/.copilot/mcp-config.json` directly using
-[`examples/clients/copilot-mcp-config.json`](../examples/clients/copilot-mcp-config.json).
+There are two distinct setups:
 
-Note the Copilot-specific fields: `"type": "local"` and `"tools": ["*"]`.
+1. **Everything inside WSL** (you open the CLI, or VS Code via the *Remote - WSL*
+   extension, from within the WSL distro). Treat it exactly like Linux: plain
+   `uv`, Linux paths (`/home/USER/...`). Use the `wsl/claude-code.mcp.json` and
+   `wsl/copilot-mcp-config.json` examples.
 
-Verify with `/mcp show` (or `/mcp show snowflake-mcp-server`) inside the CLI.
+2. **VS Code running on the Windows host**, targeting a server installed in WSL.
+   The `uv` binary lives inside WSL, so launch it through `wsl.exe` — see
+   [`examples/clients/wsl/vscode-mcp.json`](../examples/clients/wsl/vscode-mcp.json):
 
-The config dir can be relocated with the `COPILOT_HOME` environment variable.
+   ```json
+   {
+     "servers": {
+       "snowflake-mcp-server": {
+         "type": "stdio",
+         "command": "wsl.exe",
+         "args": ["-d", "Ubuntu", "-e", "bash", "-lic",
+                  "uv --directory /home/USER/path/to/snowflake-mcp-server run snowflake-mcp"]
+       }
+     },
+     "inputs": []
+   }
+   ```
 
----
+   - `-d Ubuntu`: your distro name (`wsl -l -q` to list).
+   - `bash -lic "..."`: a login+interactive shell so `uv` is on `PATH`.
+   - Adjust to your setup; the exact wrapper can vary between machines.
 
-## VS Code (GitHub Copilot, Agent mode)
-
-`Ctrl/Cmd + Shift + P` → **MCP: Open User Configuration**, then add the entry
-from [`examples/clients/vscode-mcp.json`](../examples/clients/vscode-mcp.json).
-
-Note VS Code uses the `servers` key (not `mcpServers`). Click **Start** /
-**Restart** on the server; when it reports *"Discovered 5 tools"* it is ready.
-Enable it in **Agent mode → Configure Tools**.
+Browser auth under WSL needs a browser to open: install `wslu` and
+`export BROWSER=wslview` so the Windows browser handles the SSO callback. On a
+headless server use private-key auth instead.
 
 ---
 
 ## Cross-platform notes
 
-- **Absolute paths**: always use an absolute path for `--directory`. The cwd a
-  client launches the server with is not guaranteed.
-- **`uv` on PATH**: the configs assume `uv` is on PATH. If a GUI client cannot
-  find it (common on macOS/Windows where GUI apps have a minimal PATH), replace
-  `"command": "uv"` with the absolute path to the `uv` binary
-  (`which uv` / `where uv`).
-- **Windows JSON paths**: use forward slashes (`C:/Users/you/...`) or escaped
+- **Absolute paths**: always use an absolute path for `--directory`.
+- **Windows JSON paths**: forward slashes (`C:/Users/you/...`) or escaped
   backslashes (`C:\\Users\\you\\...`).
 - **Credentials**: `.env` in the project directory is the default. Alternatively
-  pass the `SNOWFLAKE_*` variables in an `"env": { ... }` block inside the
-  client config (supported by Claude Code, Claude Desktop and Copilot CLI).
-- **WSL / headless Linux**: external-browser auth needs a browser to open. On
-  WSL install `wslu` and export `BROWSER=wslview` so the Windows browser opens
-  for the SSO callback; on a headless server use private-key auth instead.
+  pass `SNOWFLAKE_*` in an `"env": { ... }` block inside the client config
+  (supported by Claude Code, Claude Desktop and Copilot CLI).

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "snowflake-mcp-server": {
+      "type": "local",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/USER/path/to/snowflake-mcp-server",
+        "run",
+        "snowflake-mcp"
+      ],
+      "env": {},
+      "tools": ["*"]
+    }
+  }
+}

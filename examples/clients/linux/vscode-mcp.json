@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "snowflake-mcp-server": {
+      "type": "stdio",
+      "command": "/home/USER/.local/bin/uv",
+      "args": [
+        "--directory",
+        "/home/USER/path/to/snowflake-mcp-server",
+        "run",
+        "snowflake-mcp"
+      ]
+    }
+  },
+  "inputs": []
+}
