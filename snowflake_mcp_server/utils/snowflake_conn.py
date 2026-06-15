@@ -20,6 +20,7 @@ import pip_system_certs.wrapt_requests  # noqa: F401  # isort: skip
 
 import contextlib
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
@@ -142,12 +143,20 @@ class SnowflakeConnectionManager:
         self._initialized = True
 
     def initialize(self, config: SnowflakeConfig) -> None:
-        """Initialize the connection manager with the given configuration."""
+        """Store configuration and start the refresh thread, without connecting.
+
+        The actual connection is established lazily on first use (see
+        ``get_connection`` / ``run_with_connection``). Connecting eagerly here
+        would block the MCP ``initialize`` handshake while the external-browser
+        login completes, causing stdio clients (VS Code, Copilot CLI) to time
+        out before the tool list is even returned.
+        """
         with self._connection_lock:
             self._config = config
-            self._connect()
 
-            # Start background refresh thread if not already running
+            # Start background refresh thread if not already running. With no
+            # connection yet, _last_refresh_time stays None and the thread will
+            # not attempt a refresh until the first real connection exists.
             if self._refresh_thread is None or not self._refresh_thread.is_alive():
                 self._stop_event.clear()
                 self._refresh_thread = threading.Thread(
@@ -341,8 +350,12 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
     if config.role:
         conn_params["role"] = config.role
 
-    # Explicitly cast the return value to SnowflakeConnection to satisfy mypy
-    connection: SnowflakeConnection = snowflake.connector.connect(**conn_params)
+    # The external-browser authenticator prints status text ("Going to open:
+    # https://...") to stdout. Under the stdio MCP transport stdout is the
+    # JSON-RPC channel, so redirect any such output to stderr to avoid
+    # corrupting the protocol stream.
+    with contextlib.redirect_stdout(sys.stderr):
+        connection: SnowflakeConnection = snowflake.connector.connect(**conn_params)
     return connection
 
 
