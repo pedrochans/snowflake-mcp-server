@@ -95,34 +95,32 @@ Key/field: top-level **`servers`** (not `mcpServers`), `"type": "stdio"`.
 
 ## WSL specifics
 
-There are two distinct setups:
+**Normal case — work inside WSL.** Open the CLI, or VS Code via the
+*Remote - WSL* extension, from within the WSL distro. The client then runs the
+server inside WSL, so the config is just Linux-style: `uv` (or the absolute
+`/home/USER/.local/bin/uv` for VS Code), Linux paths (`/home/USER/...`). This is
+what the `wsl/*.json` examples use, and what you want almost always.
 
-1. **Everything inside WSL** (you open the CLI, or VS Code via the *Remote - WSL*
-   extension, from within the WSL distro). Treat it exactly like Linux: plain
-   `uv`, Linux paths (`/home/USER/...`). Use the `wsl/claude-code.mcp.json` and
-   `wsl/copilot-mcp-config.json` examples.
+**Rare case — native Windows VS Code targeting a WSL server** (no Remote-WSL
+extension). The `uv` binary lives inside WSL, so it must be launched through
+`wsl.exe`:
 
-2. **VS Code running on the Windows host**, targeting a server installed in WSL.
-   The `uv` binary lives inside WSL, so launch it through `wsl.exe` — see
-   [`examples/clients/wsl/vscode-mcp.json`](../examples/clients/wsl/vscode-mcp.json):
+```json
+{
+  "servers": {
+    "snowflake-mcp-server": {
+      "type": "stdio",
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "-e", "bash", "-lic",
+               "uv --directory /home/USER/path/to/snowflake-mcp-server run snowflake-mcp"]
+    }
+  },
+  "inputs": []
+}
+```
 
-   ```json
-   {
-     "servers": {
-       "snowflake-mcp-server": {
-         "type": "stdio",
-         "command": "wsl.exe",
-         "args": ["-d", "Ubuntu", "-e", "bash", "-lic",
-                  "uv --directory /home/USER/path/to/snowflake-mcp-server run snowflake-mcp"]
-       }
-     },
-     "inputs": []
-   }
-   ```
-
-   - `-d Ubuntu`: your distro name (`wsl -l -q` to list).
-   - `bash -lic "..."`: a login+interactive shell so `uv` is on `PATH`.
-   - Adjust to your setup; the exact wrapper can vary between machines.
+`-d Ubuntu` is your distro (`wsl -l -q` to list); `bash -lic` is a login shell so
+`uv` is on `PATH`. Prefer the Remote-WSL setup above whenever you can.
 
 Browser auth under WSL needs a browser to open: install `wslu` and
 `export BROWSER=wslview` so the Windows browser handles the SSO callback. On a

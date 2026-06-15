@@ -2,14 +2,12 @@
   "servers": {
     "snowflake-mcp-server": {
       "type": "stdio",
-      "command": "wsl.exe",
+      "command": "/home/USER/.local/bin/uv",
       "args": [
-        "-d",
-        "Ubuntu",
-        "-e",
-        "bash",
-        "-lic",
-        "uv --directory /home/USER/path/to/snowflake-mcp-server run snowflake-mcp"
+        "--directory",
+        "/home/USER/path/to/snowflake-mcp-server",
+        "run",
+        "snowflake-mcp"
       ]
     }
   },
