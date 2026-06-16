@@ -202,6 +202,7 @@ and VS Code** — plus ready-made config files — is in
 | `pip`/build errors on Windows | Install the Visual C++ Build Tools and restart. |
 | Corporate TLS / VPN errors | The server already uses the OS trust store; make sure your corporate root CA is installed there. |
 | Repeated SSO popups | Ensure `keyring` is installed (it is, via the `secure-local-storage` extra) so the token can be cached. |
+| `250001 ... user differs from the user currently logged in at the IDP` | `SNOWFLAKE_USER` must be your Snowflake **LOGIN_NAME**, not your display name. Run `DESC USER <you>;` in Snowsight and copy the `LOGIN_NAME` value exactly (often your corporate email/UPN). |
 
 ## Development
 

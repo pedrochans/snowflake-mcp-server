@@ -114,11 +114,16 @@ async def _run_db(
                 lambda conn: impl(conn, arguments)
             )
         except Exception as e:
-            return [
-                mcp_types.TextContent(
-                    type="text", text=f"Error connecting to Snowflake: {str(e)}"
+            message = f"Error connecting to Snowflake: {str(e)}"
+            # 250001 with external-browser auth almost always means SNOWFLAKE_USER
+            # is not the user's Snowflake LOGIN_NAME. Point the user at the fix.
+            if "250001" in str(e) or "differs from the user" in str(e):
+                message += (
+                    "\n\nHint: with external-browser SSO, SNOWFLAKE_USER must be "
+                    "your Snowflake LOGIN_NAME (run `DESC USER <you>;` in Snowsight "
+                    "and use the LOGIN_NAME value), not your display name."
                 )
-            ]
+            return [mcp_types.TextContent(type="text", text=message)]
 
     return await anyio.to_thread.run_sync(work)
 
