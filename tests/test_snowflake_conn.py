@@ -144,9 +144,40 @@ def test_run_with_connection_requires_initialized_config() -> None:
         mgr._connection = None
         mgr._connection_healthy = False
         mgr._config = None
+        mgr._last_failed_connect = None  # not in connect cooldown
         with pytest.raises(ValueError):
             mgr.run_with_connection(lambda conn: conn)
     finally:
         mgr._connection = prev_conn
         mgr._connection_healthy = prev_healthy
         mgr._config = prev_config
+
+
+def test_run_with_connection_honors_failure_cooldown() -> None:
+    """Within the cooldown after a failed connect, re-raise the cached error
+    instead of attempting another (interactive) connection."""
+    from datetime import datetime
+
+    mgr = SnowflakeConnectionManager()  # singleton
+    saved = (
+        mgr._connection,
+        mgr._connection_healthy,
+        mgr._last_failed_connect,
+        mgr._last_error,
+    )
+    try:
+        mgr._connection = None
+        mgr._connection_healthy = False
+        mgr._last_error = RuntimeError("auth failed")
+        mgr._last_failed_connect = datetime.now()  # just failed -> in cooldown
+        with patch.object(mgr, "_connect") as mock_connect:
+            with pytest.raises(RuntimeError, match="auth failed"):
+                mgr.run_with_connection(lambda conn: conn)
+            mock_connect.assert_not_called()
+    finally:
+        (
+            mgr._connection,
+            mgr._connection_healthy,
+            mgr._last_failed_connect,
+            mgr._last_error,
+        ) = saved

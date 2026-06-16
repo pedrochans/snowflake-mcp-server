@@ -107,6 +107,8 @@ class SnowflakeConnectionManager:
     _refresh_interval: timedelta
     _connection_healthy: bool
     _last_error: Optional[Exception]
+    _last_failed_connect: Optional[datetime]
+    _connect_cooldown: timedelta
     _retry_count: int
     _max_retry_count: int
     _retry_backoff_seconds: List[int]
@@ -131,6 +133,11 @@ class SnowflakeConnectionManager:
         self._stop_event = threading.Event()
         self._connection_healthy = False
         self._last_error = None
+        # After a failed connection attempt, suppress re-triggering the
+        # interactive browser login for this long, to avoid a popup storm
+        # (one per tool call) when auth is misconfigured.
+        self._last_failed_connect = None
+        self._connect_cooldown = timedelta(seconds=30)
         self._retry_count = 0
         self._max_retry_count = 3
         # Exponential backoff retry intervals in seconds: 10s, 30s, 60s
@@ -164,18 +171,31 @@ class SnowflakeConnectionManager:
                 )
                 self._refresh_thread.start()
 
+    def _ensure_connected(self) -> None:
+        """Ensure a healthy connection exists. Caller must hold the lock.
+
+        After a failed attempt, re-raise the last error during the cooldown
+        window instead of opening another browser window on every call.
+        """
+        if self._connection is not None and self._connection_healthy:
+            return
+        if (
+            self._last_failed_connect is not None
+            and datetime.now() - self._last_failed_connect < self._connect_cooldown
+        ):
+            raise self._last_error or RuntimeError(
+                "Snowflake connection unavailable (cooldown after a failed "
+                "authentication attempt)"
+            )
+        if self._config is None:
+            raise ValueError("Connection manager not initialized with a configuration")
+        self._connect()
+
     def get_connection(self) -> SnowflakeConnection:
         """Get the current Snowflake connection, creating it if necessary."""
         with self._connection_lock:
-            if self._connection is None or not self._connection_healthy:
-                if self._config is None:
-                    raise ValueError(
-                        "Connection manager not initialized with a configuration"
-                    )
-                self._connect()
-
-            # At this point, self._connection should never be None because
-            # _connect() would have either set it or raised an exception
+            self._ensure_connected()
+            # _ensure_connected() either set the connection or raised.
             assert (
                 self._connection is not None
             ), "Connection is None after connect attempt"
@@ -199,12 +219,7 @@ class SnowflakeConnectionManager:
         avoid blocking the event loop.
         """
         with self._connection_lock:
-            if self._connection is None or not self._connection_healthy:
-                if self._config is None:
-                    raise ValueError(
-                        "Connection manager not initialized with a configuration"
-                    )
-                self._connect()
+            self._ensure_connected()
             assert self._connection is not None
             return operation(self._connection)
 
@@ -253,10 +268,12 @@ class SnowflakeConnectionManager:
             self._last_refresh_time = datetime.now()
             self._connection_healthy = True
             self._last_error = None
+            self._last_failed_connect = None
             self._retry_count = 0
         except Exception as e:
             self._connection_healthy = False
             self._last_error = e
+            self._last_failed_connect = datetime.now()
             raise
 
     @contextlib.contextmanager
