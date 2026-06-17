@@ -116,6 +116,7 @@ def test_run_with_connection_runs_operation_under_lock() -> None:
     prev_conn, prev_healthy = mgr._connection, mgr._connection_healthy
     try:
         mgr._connection = sentinel_conn
+        sentinel_conn.is_closed.return_value = False
         mgr._connection_healthy = True
         received = {}
 
@@ -180,4 +181,56 @@ def test_run_with_connection_honors_failure_cooldown() -> None:
             mgr._connection_healthy,
             mgr._last_failed_connect,
             mgr._last_error,
+        ) = saved
+
+
+def test_run_with_connection_reconnects_on_expired_session(
+    snowflake_config_browser: SnowflakeConfig,
+) -> None:
+    """A stale session that fails mid-operation triggers one reconnect+retry."""
+    from snowflake.connector.errors import DatabaseError
+
+    mgr = SnowflakeConnectionManager()  # singleton
+    saved = (
+        mgr._connection,
+        mgr._connection_healthy,
+        mgr._last_failed_connect,
+        mgr._last_error,
+        mgr._config,
+    )
+    try:
+        old_conn = MagicMock()
+        old_conn.is_closed.return_value = False
+        new_conn = MagicMock()
+        new_conn.is_closed.return_value = False
+        mgr._connection = old_conn
+        mgr._connection_healthy = True
+        mgr._last_failed_connect = None
+        mgr._config = snowflake_config_browser
+
+        def fake_connect() -> None:
+            mgr._connection = new_conn
+            mgr._connection_healthy = True
+            mgr._last_failed_connect = None
+
+        seen = []
+
+        def op(conn: object) -> str:
+            seen.append(conn)
+            if conn is old_conn:
+                raise DatabaseError(
+                    msg="Authentication token has expired", errno=390114
+                )
+            return "ok"
+
+        with patch.object(mgr, "_connect", side_effect=fake_connect):
+            assert mgr.run_with_connection(op) == "ok"
+        assert seen == [old_conn, new_conn]  # retried on the fresh connection
+    finally:
+        (
+            mgr._connection,
+            mgr._connection_healthy,
+            mgr._last_failed_connect,
+            mgr._last_error,
+            mgr._config,
         ) = saved

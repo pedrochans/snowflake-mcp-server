@@ -37,6 +37,26 @@ from snowflake.connector.errors import DatabaseError, OperationalError
 
 _T = TypeVar("_T")
 
+# Snowflake error codes that mean the session/token is no longer valid and the
+# connection must be re-established (e.g. after a long idle period).
+_SESSION_EXPIRED_ERROR_CODES = {390114, 390104, 390108, 390195}
+_SESSION_EXPIRED_MARKERS = (
+    "authentication token has expired",
+    "session no longer exists",
+    "session does not exist",
+    "must authenticate again",
+    "authenticate again",
+)
+
+
+def _is_session_expired_error(error: BaseException) -> bool:
+    """Return True if *error* indicates an expired/invalid Snowflake session."""
+    errno = getattr(error, "errno", None)
+    if errno in _SESSION_EXPIRED_ERROR_CODES:
+        return True
+    message = str(error).lower()
+    return any(marker in message for marker in _SESSION_EXPIRED_MARKERS)
+
 
 class AuthType(str, Enum):
     """Authentication types for Snowflake."""
@@ -161,10 +181,16 @@ class SnowflakeConnectionManager:
         with self._connection_lock:
             self._config = config
 
-            # Start background refresh thread if not already running. With no
-            # connection yet, _last_refresh_time stays None and the thread will
-            # not attempt a refresh until the first real connection exists.
-            if self._refresh_thread is None or not self._refresh_thread.is_alive():
+            # Only key-pair auth can refresh silently in the background. For
+            # external-browser auth a proactive refresh would need an
+            # interactive login; firing it while idle pops an unattended browser
+            # and blocks every tool call on the lock. For browser auth we skip
+            # the timer and reconnect lazily on demand (when the user is there),
+            # recovering expired sessions via the retry in run_with_connection.
+            needs_refresh_thread = config.auth_type == AuthType.PRIVATE_KEY
+            if needs_refresh_thread and (
+                self._refresh_thread is None or not self._refresh_thread.is_alive()
+            ):
                 self._stop_event.clear()
                 self._refresh_thread = threading.Thread(
                     target=self._refresh_connection_periodically, daemon=True
@@ -177,7 +203,11 @@ class SnowflakeConnectionManager:
         After a failed attempt, re-raise the last error during the cooldown
         window instead of opening another browser window on every call.
         """
-        if self._connection is not None and self._connection_healthy:
+        if (
+            self._connection is not None
+            and self._connection_healthy
+            and not self._connection.is_closed()
+        ):
             return
         if (
             self._last_failed_connect is not None
@@ -221,7 +251,19 @@ class SnowflakeConnectionManager:
         with self._connection_lock:
             self._ensure_connected()
             assert self._connection is not None
-            return operation(self._connection)
+            try:
+                return operation(self._connection)
+            except Exception as e:
+                # A long idle period can leave a stale session that only fails
+                # when a query runs. Drop it and reconnect once (interactive if
+                # needed — the user is present, since a tool call triggered us).
+                if not _is_session_expired_error(e):
+                    raise
+                self._connection_healthy = False
+                self._last_failed_connect = None  # allow an immediate reconnect
+                self._ensure_connected()
+                assert self._connection is not None
+                return operation(self._connection)
 
     def is_healthy(self) -> Tuple[bool, Optional[str]]:
         """Check if the connection is healthy.

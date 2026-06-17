@@ -203,6 +203,7 @@ and VS Code** — plus ready-made config files — is in
 | Corporate TLS / VPN errors | The server already uses the OS trust store; make sure your corporate root CA is installed there. |
 | Repeated SSO popups | Ensure `keyring` is installed (it is, via the `secure-local-storage` extra) so the token can be cached. |
 | `250001 ... user differs from the user currently logged in at the IDP` | `SNOWFLAKE_USER` must be your Snowflake **LOGIN_NAME**, not your display name. Run `DESC USER <you>;` in Snowsight and copy the `LOGIN_NAME` value exactly (often your corporate email/UPN). |
+| Tool calls fail after the server sat idle for many hours | Expected with browser auth: the SSO session expires. The first query after a long idle now reconnects automatically and reopens the browser to re-authenticate — just complete the login. |
 
 ## Development
 
