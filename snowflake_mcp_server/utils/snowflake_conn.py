@@ -226,14 +226,12 @@ class SnowflakeConnectionManager:
         with self._connection_lock:
             self._ensure_connected()
             # _ensure_connected() either set the connection or raised.
-            assert (
-                self._connection is not None
-            ), "Connection is None after connect attempt"
+            assert self._connection is not None, (
+                "Connection is None after connect attempt"
+            )
             return self._connection
 
-    def run_with_connection(
-        self, operation: Callable[[SnowflakeConnection], _T]
-    ) -> _T:
+    def run_with_connection(self, operation: Callable[[SnowflakeConnection], _T]) -> _T:
         """Run ``operation(connection)`` while holding the connection lock.
 
         This is the single serialization gate for all database access. Holding

@@ -6,8 +6,10 @@ Snowflake using either service account authentication with a private key or
 external browser authentication. It exposes various tools for querying database
 metadata and data, including support for multi-view and multi-database queries.
 
-The server is designed to be used with Claude Desktop as an MCP server, providing
-Claude with secure, controlled access to Snowflake data for analysis and reporting.
+The server is built on the high-level ``MCPServer`` API (mcp >= 2.0): each tool
+is a typed function whose signature generates the JSON Schema and validates
+arguments, and raised exceptions are reported to the client as tool errors
+(``isError: true``).
 """
 
 # pip-system-certs patches the SSL stack to use the operating system trust
@@ -16,13 +18,15 @@ Claude with secure, controlled access to Snowflake data for analysis and reporti
 import pip_system_certs.wrapt_requests  # noqa: F401  # isort: skip
 
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
+from typing import Annotated, Optional
 
 import anyio
-import mcp.types as mcp_types
 from dotenv import load_dotenv
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server import MCPServer
+from mcp_types import ToolAnnotations
+from pydantic import Field
 from snowflake.connector import SnowflakeConnection
 
 from snowflake_mcp_server.utils.snowflake_conn import (
@@ -31,7 +35,6 @@ from snowflake_mcp_server.utils.snowflake_conn import (
     connection_manager,
 )
 from snowflake_mcp_server.utils.sql_guard import (
-    ReadOnlyViolation,
     assert_read_only,
     first_statement_verb,
     validate_identifier,
@@ -39,6 +42,15 @@ from snowflake_mcp_server.utils.sql_guard import (
 
 # Load environment variables from .env file
 load_dotenv()
+
+SERVER_VERSION = "0.3.0"
+
+# Every tool in this server is a read-only query; advertise that to clients.
+_READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False)
+
+# Cell values longer than this are truncated in markdown tables to keep tool
+# results at a size the client can digest.
+_MAX_CELL_CHARS = 200
 
 
 # Initialize Snowflake configuration from environment variables
@@ -68,39 +80,29 @@ def get_snowflake_config() -> SnowflakeConfig:
     return config
 
 
-# Initialize the connection manager at startup
-def init_connection_manager() -> None:
-    """Initialize the connection manager with Snowflake config."""
-    config = get_snowflake_config()
-    connection_manager.initialize(config)
+@asynccontextmanager
+async def _lifespan(_server: "MCPServer[None]") -> AsyncIterator[None]:
+    """Configure the connection manager on startup, close it on shutdown.
+
+    The manager connects lazily on first use (see ``snowflake_conn``), so
+    startup never blocks the MCP handshake on an interactive browser login.
+    """
+    connection_manager.initialize(get_snowflake_config())
+    try:
+        yield
+    finally:
+        connection_manager.close()
 
 
-# Define MCP server
-def create_server() -> Server:
-    """Create and configure the MCP server."""
-    # Initialize the connection manager before setting up the server
-    init_connection_manager()
-
-    server: Server = Server(
-        name="snowflake-mcp-server",
-        version="0.2.0",
-        instructions="MCP server for performing read-only operations against "
-        "Snowflake.",
-    )
-
-    return server
+server: MCPServer[None] = MCPServer(
+    "snowflake-mcp-server",
+    version=SERVER_VERSION,
+    instructions="MCP server for performing read-only operations against Snowflake.",
+    lifespan=_lifespan,
+)
 
 
-# Shared return type for all tool handlers
-ToolResult = Sequence[
-    Union[mcp_types.TextContent, mcp_types.ImageContent, mcp_types.EmbeddedResource]
-]
-
-
-async def _run_db(
-    arguments: Optional[Dict[str, Any]],
-    impl: Callable[[SnowflakeConnection, Optional[Dict[str, Any]]], ToolResult],
-) -> ToolResult:
+async def _run_db(impl: Callable[[SnowflakeConnection], str]) -> str:
     """Run a synchronous tool implementation off the event loop.
 
     The blocking Snowflake work is executed in a worker thread, and the whole
@@ -108,187 +110,137 @@ async def _run_db(
     cannot corrupt the shared connection's session state.
     """
 
-    def work() -> ToolResult:
-        try:
-            return connection_manager.run_with_connection(
-                lambda conn: impl(conn, arguments)
-            )
-        except Exception as e:
-            message = f"Error connecting to Snowflake: {str(e)}"
-            # 250001 with external-browser auth almost always means SNOWFLAKE_USER
-            # is not the user's Snowflake LOGIN_NAME. Point the user at the fix.
-            if "250001" in str(e) or "differs from the user" in str(e):
-                message += (
-                    "\n\nHint: with external-browser SSO, SNOWFLAKE_USER must be "
-                    "your Snowflake LOGIN_NAME (run `DESC USER <you>;` in Snowsight "
-                    "and use the LOGIN_NAME value), not your display name."
-                )
-            return [mcp_types.TextContent(type="text", text=message)]
+    def work() -> str:
+        return connection_manager.run_with_connection(impl)
 
-    return await anyio.to_thread.run_sync(work)
-
-
-# Snowflake query handler functions
-async def handle_list_databases(
-    name: str, arguments: Optional[Dict[str, Any]] = None
-) -> ToolResult:
-    """Tool handler to list all accessible Snowflake databases."""
-    return await _run_db(arguments, _list_databases_impl)
-
-
-def _list_databases_impl(
-    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
-) -> ToolResult:
-    """Synchronous implementation; runs in a worker thread under the lock."""
     try:
-
-        # Execute query
-        cursor = conn.cursor()
-        cursor.execute("SHOW DATABASES")
-
-        # Process results
-        databases = []
-        for row in cursor:
-            databases.append(row[1])  # Database name is in the second column
-
-        cursor.close()
-        # Don't close the connection, just the cursor
-
-        # Return formatted content
-        return [
-            mcp_types.TextContent(
-                type="text",
-                text="Available Snowflake databases:\n" + "\n".join(databases),
-            )
-        ]
-
+        return await anyio.to_thread.run_sync(work)
     except Exception as e:
-        return [
-            mcp_types.TextContent(
-                type="text", text=f"Error querying databases: {str(e)}"
-            )
-        ]
+        message = str(e)
+        # 250001 with external-browser auth almost always means SNOWFLAKE_USER
+        # is not the user's Snowflake LOGIN_NAME. Point the user at the fix.
+        if "250001" in message or "differs from the user" in message:
+            raise RuntimeError(
+                f"{message}\n\nHint: with external-browser SSO, SNOWFLAKE_USER "
+                "must be your Snowflake LOGIN_NAME (run `DESC USER <you>;` in "
+                "Snowsight and use the LOGIN_NAME value), not your display name."
+            ) from e
+        raise
 
 
-async def handle_list_views(
-    name: str, arguments: Optional[Dict[str, Any]] = None
-) -> ToolResult:
-    """Tool handler to list views in a specified database and schema."""
-    return await _run_db(arguments, _list_views_impl)
+def _resolve_schema(conn: SnowflakeConnection, schema: Optional[str]) -> str:
+    """Return the validated *schema*, or resolve the session's current schema."""
+    if schema:
+        return validate_identifier(schema, "schema")
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT CURRENT_SCHEMA()")
+        schema_result = cursor.fetchone()
+    if not schema_result or not schema_result[0]:
+        raise RuntimeError(
+            "Could not determine current schema; pass the schema argument"
+        )
+    return str(schema_result[0])
 
 
-def _list_views_impl(
-    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
-) -> ToolResult:
-    """Synchronous implementation; runs in a worker thread under the lock."""
-    try:
+def _markdown_table(
+    column_names: Sequence[str], rows: Sequence[Sequence[object]]
+) -> str:
+    """Render query results as a markdown table.
 
-        # Extract and validate arguments
-        database = arguments.get("database") if arguments else None
-        schema = arguments.get("schema") if arguments else None
-
-        if not database:
-            return [
-                mcp_types.TextContent(
-                    type="text", text="Error: database parameter is required"
-                )
-            ]
-
-        database = validate_identifier(database, "database")
-        if schema:
-            schema = validate_identifier(schema, "schema")
-
-        # Switch context, resolving the current schema when none was provided
-        with conn.cursor() as cursor:
-            cursor.execute(f"USE DATABASE {database}")
-            if schema:
-                cursor.execute(f"USE SCHEMA {schema}")
+    ``None`` becomes ``NULL``, pipes are escaped, and long values are truncated
+    to ``_MAX_CELL_CHARS`` characters.
+    """
+    lines = [
+        "| " + " | ".join(column_names) + " |",
+        "| " + " | ".join("---" for _ in column_names) + " |",
+    ]
+    for row in rows:
+        formatted_values = []
+        for val in row:
+            if val is None:
+                formatted_values.append("NULL")
             else:
-                cursor.execute("SELECT CURRENT_SCHEMA()")
-                schema_result = cursor.fetchone()
-                if not schema_result or not schema_result[0]:
-                    return [
-                        mcp_types.TextContent(
-                            type="text",
-                            text="Error: Could not determine current schema",
-                        )
-                    ]
-                schema = schema_result[0]
+                val_str = str(val).replace("|", "\\|")
+                if len(val_str) > _MAX_CELL_CHARS:
+                    val_str = val_str[: _MAX_CELL_CHARS - 3] + "..."
+                formatted_values.append(val_str)
+        lines.append("| " + " | ".join(formatted_values) + " |")
+    return "\n".join(lines)
 
-        # Execute query to list views
+
+@server.tool(
+    description="List all accessible Snowflake databases",
+    annotations=_READ_ONLY,
+)
+async def list_databases() -> str:
+    """Tool handler to list all accessible Snowflake databases."""
+
+    def impl(conn: SnowflakeConnection) -> str:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW DATABASES")
+            # Database name is in the second column
+            databases = [row[1] for row in cursor]
+        return "Available Snowflake databases:\n" + "\n".join(databases)
+
+    return await _run_db(impl)
+
+
+@server.tool(
+    description="List all views in a specified database and schema",
+    annotations=_READ_ONLY,
+)
+async def list_views(
+    database: Annotated[str, Field(description="The database name")],
+    schema: Annotated[
+        Optional[str],
+        Field(description="The schema name (uses current schema if not provided)"),
+    ] = None,
+) -> str:
+    """Tool handler to list views in a specified database and schema."""
+
+    def impl(conn: SnowflakeConnection) -> str:
+        db = validate_identifier(database, "database")
+        with conn.cursor() as cursor:
+            cursor.execute(f"USE DATABASE {db}")
+        sch = _resolve_schema(conn, schema)
+
         views = []
         with conn.cursor() as cursor:
-            cursor.execute(f"SHOW VIEWS IN {database}.{schema}")
+            cursor.execute(f"SHOW VIEWS IN {db}.{sch}")
             for row in cursor:
                 view_name = row[1]  # View name is in the second column
                 created_on = row[5]  # Creation date
                 views.append(f"{view_name} (created: {created_on})")
 
-        if views:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text=f"Views in {database}.{schema}:\n" + "\n".join(views),
-                )
-            ]
-        else:
-            return [
-                mcp_types.TextContent(
-                    type="text", text=f"No views found in {database}.{schema}"
-                )
-            ]
+        if not views:
+            return f"No views found in {db}.{sch}"
+        return f"Views in {db}.{sch}:\n" + "\n".join(views)
 
-    except Exception as e:
-        return [
-            mcp_types.TextContent(type="text", text=f"Error listing views: {str(e)}")
-        ]
+    return await _run_db(impl)
 
 
-async def handle_describe_view(
-    name: str, arguments: Optional[Dict[str, Any]] = None
-) -> ToolResult:
+@server.tool(
+    description=(
+        "Get detailed information about a specific view including columns "
+        "and SQL definition"
+    ),
+    annotations=_READ_ONLY,
+)
+async def describe_view(
+    database: Annotated[str, Field(description="The database name")],
+    view_name: Annotated[str, Field(description="The name of the view to describe")],
+    schema: Annotated[
+        Optional[str],
+        Field(description="The schema name (uses current schema if not provided)"),
+    ] = None,
+) -> str:
     """Tool handler to describe the structure of a view."""
-    return await _run_db(arguments, _describe_view_impl)
 
-
-def _describe_view_impl(
-    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
-) -> ToolResult:
-    """Synchronous implementation; runs in a worker thread under the lock."""
-    try:
-
-        # Extract arguments
-        database = arguments.get("database") if arguments else None
-        schema = arguments.get("schema") if arguments else None
-        view_name = arguments.get("view_name") if arguments else None
-
-        if not database or not view_name:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text="Error: database and view_name parameters are required",
-                )
-            ]
-
-        database = validate_identifier(database, "database")
-        view_name = validate_identifier(view_name, "view_name")
-
-        # Use the provided schema or resolve the current one
-        if schema:
-            schema = validate_identifier(schema, "schema")
-        else:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT CURRENT_SCHEMA()")
-                schema_result = cursor.fetchone()
-            if not schema_result or not schema_result[0]:
-                return [
-                    mcp_types.TextContent(
-                        type="text", text="Error: Could not determine current schema"
-                    )
-                ]
-            schema = schema_result[0]
-
-        full_view_name = f"{database}.{schema}.{view_name}"
+    def impl(conn: SnowflakeConnection) -> str:
+        db = validate_identifier(database, "database")
+        view = validate_identifier(view_name, "view_name")
+        sch = _resolve_schema(conn, schema)
+        full_view_name = f"{db}.{sch}.{view}"
 
         # Describe the view and fetch its definition
         columns = []
@@ -306,83 +258,47 @@ def _describe_view_impl(
                 view_ddl_result[0] if view_ddl_result else "Definition not available"
             )
 
-        if columns:
-            result = f"## View: {full_view_name}\n\n"
-            result += "### Columns:\n"
-            for col in columns:
-                result += f"- {col}\n"
+        if not columns:
+            return (
+                f"View {full_view_name} not found or you don't have permission "
+                "to access it."
+            )
 
-            result += "\n### View Definition:\n```sql\n"
-            result += view_ddl
-            result += "\n```"
+        result = f"## View: {full_view_name}\n\n"
+        result += "### Columns:\n"
+        for col in columns:
+            result += f"- {col}\n"
+        result += "\n### View Definition:\n```sql\n"
+        result += view_ddl
+        result += "\n```"
+        return result
 
-            return [mcp_types.TextContent(type="text", text=result)]
-        else:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text=f"View {full_view_name} not found or you don't have permission to access it.",
-                )
-            ]
-
-    except Exception as e:
-        return [
-            mcp_types.TextContent(type="text", text=f"Error describing view: {str(e)}")
-        ]
+    return await _run_db(impl)
 
 
-async def handle_query_view(
-    name: str, arguments: Optional[Dict[str, Any]] = None
-) -> ToolResult:
+@server.tool(
+    description="Query data from a view with an optional row limit",
+    annotations=_READ_ONLY,
+)
+async def query_view(
+    database: Annotated[str, Field(description="The database name")],
+    view_name: Annotated[str, Field(description="The name of the view to query")],
+    schema: Annotated[
+        Optional[str],
+        Field(description="The schema name (uses current schema if not provided)"),
+    ] = None,
+    limit: Annotated[
+        int, Field(description="Maximum number of rows to return", ge=1)
+    ] = 10,
+) -> str:
     """Tool handler to query data from a view with optional limit."""
-    return await _run_db(arguments, _query_view_impl)
 
+    def impl(conn: SnowflakeConnection) -> str:
+        db = validate_identifier(database, "database")
+        view = validate_identifier(view_name, "view_name")
+        sch = _resolve_schema(conn, schema)
+        full_view_name = f"{db}.{sch}.{view}"
 
-def _query_view_impl(
-    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
-) -> ToolResult:
-    """Synchronous implementation; runs in a worker thread under the lock."""
-    try:
-
-        # Extract arguments
-        database = arguments.get("database") if arguments else None
-        schema = arguments.get("schema") if arguments else None
-        view_name = arguments.get("view_name") if arguments else None
-        limit = (
-            int(arguments.get("limit", 10))
-            if arguments and arguments.get("limit") is not None
-            else 10
-        )  # Default limit to 10 rows
-
-        if not database or not view_name:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text="Error: database and view_name parameters are required",
-                )
-            ]
-
-        database = validate_identifier(database, "database")
-        view_name = validate_identifier(view_name, "view_name")
-
-        # Use the provided schema or resolve the current one
-        if schema:
-            schema = validate_identifier(schema, "schema")
-        else:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT CURRENT_SCHEMA()")
-                schema_result = cursor.fetchone()
-            if not schema_result or not schema_result[0]:
-                return [
-                    mcp_types.TextContent(
-                        type="text", text="Error: Could not determine current schema"
-                    )
-                ]
-            schema = schema_result[0]
-
-        full_view_name = f"{database}.{schema}.{view_name}"
-
-        # Execute query to get data from view
         with conn.cursor() as cursor:
             cursor.execute(f"SELECT * FROM {full_view_name} LIMIT {limit}")
             column_names = (
@@ -390,96 +306,62 @@ def _query_view_impl(
             )
             rows = cursor.fetchall()
 
-        if rows:
-            # Format the results as a markdown table
-            result = f"## Data from {full_view_name} (Showing {len(rows)} rows)\n\n"
+        if not rows:
+            return f"No data found in view {full_view_name} or the view is empty."
 
-            # Create header row
-            result += "| " + " | ".join(column_names) + " |\n"
-            result += "| " + " | ".join(["---" for _ in column_names]) + " |\n"
+        result = f"## Data from {full_view_name} (Showing {len(rows)} rows)\n\n"
+        result += _markdown_table(column_names, rows)
+        return result
 
-            # Add data rows
-            for row in rows:
-                formatted_values = []
-                for val in row:
-                    if val is None:
-                        formatted_values.append("NULL")
-                    else:
-                        # Format the value as string and escape any pipe characters
-                        formatted_values.append(str(val).replace("|", "\\|"))
-                result += "| " + " | ".join(formatted_values) + " |\n"
-
-            return [mcp_types.TextContent(type="text", text=result)]
-        else:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text=f"No data found in view {full_view_name} or the view is empty.",
-                )
-            ]
-
-    except Exception as e:
-        return [
-            mcp_types.TextContent(type="text", text=f"Error querying view: {str(e)}")
-        ]
+    return await _run_db(impl)
 
 
-async def handle_execute_query(
-    name: str, arguments: Optional[Dict[str, Any]] = None
-) -> ToolResult:
+@server.tool(
+    description=(
+        "Execute read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH, "
+        "USE). Use SHOW for metadata (TABLES/PIPES/TASKS/STREAMS/GRANTS/"
+        "PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA for object details, "
+        "ACCOUNT_USAGE for audit data."
+    ),
+    annotations=_READ_ONLY,
+)
+async def execute_query(
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "SQL query to execute. Supports: SELECT, SHOW commands "
+                "(TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), "
+                "INFORMATION_SCHEMA queries, ACCOUNT_USAGE queries, USE statements"
+            )
+        ),
+    ],
+    database: Annotated[
+        Optional[str], Field(description="The database to use (optional)")
+    ] = None,
+    schema: Annotated[
+        Optional[str], Field(description="The schema to use (optional)")
+    ] = None,
+    limit: Annotated[
+        int, Field(description="Maximum number of rows to return", ge=1)
+    ] = 100,
+) -> str:
     """Tool handler to execute read-only SQL queries against Snowflake."""
-    return await _run_db(arguments, _execute_query_impl)
+    # Validate that the query is read-only before touching the database
+    # (raises ReadOnlyViolation, surfaced to the client as a tool error).
+    assert_read_only(query)
 
-
-def _execute_query_impl(
-    conn: SnowflakeConnection, arguments: Optional[Dict[str, Any]]
-) -> ToolResult:
-    """Synchronous implementation; runs in a worker thread under the lock."""
-    try:
-
-        # Extract arguments
-        query = arguments.get("query") if arguments else None
-        database = arguments.get("database") if arguments else None
-        schema = arguments.get("schema") if arguments else None
-        limit_rows = (
-            int(arguments.get("limit", 100))
-            if arguments and arguments.get("limit") is not None
-            else 100
-        )  # Default limit to 100 rows
-
-        if not query:
-            return [
-                mcp_types.TextContent(
-                    type="text", text="Error: query parameter is required"
-                )
-            ]
-
-        # Validate that the query is read-only (raises ReadOnlyViolation)
-        try:
-            assert_read_only(query)
-        except ReadOnlyViolation as e:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text=(
-                        "Error: Only SELECT/SHOW/DESCRIBE/EXPLAIN/WITH/USE queries "
-                        f"are allowed for security reasons. {str(e)}"
-                    ),
-                )
-            ]
-
-        # Validate optional context identifiers before interpolation
-        if database:
-            database = validate_identifier(database, "database")
-        if schema:
-            schema = validate_identifier(schema, "schema")
+    def impl(conn: SnowflakeConnection) -> str:
+        sql = query
+        db = validate_identifier(database, "database") if database else None
+        sch = validate_identifier(schema, "schema") if schema else None
 
         # Switch context (if requested) and read it back for display
         with conn.cursor() as context_cursor:
-            if database:
-                context_cursor.execute(f"USE DATABASE {database}")
-            if schema:
-                context_cursor.execute(f"USE SCHEMA {schema}")
+            if db:
+                context_cursor.execute(f"USE DATABASE {db}")
+            if sch:
+                context_cursor.execute(f"USE SCHEMA {sch}")
             context_cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
             context_result = context_cursor.fetchone()
         if context_result:
@@ -488,200 +370,39 @@ def _execute_query_impl(
             current_db, current_schema = "Unknown", "Unknown"
 
         # Only add a LIMIT clause for row-returning queries (SELECT/WITH)
-        needs_limit = first_statement_verb(query) in {"select", "with"}
-        if needs_limit and "LIMIT " not in query.upper():
+        needs_limit = first_statement_verb(sql) in {"select", "with"}
+        if needs_limit and "LIMIT " not in sql.upper():
             # Remove any trailing semicolon before adding the LIMIT clause
-            query = query.rstrip().rstrip(";")
-            query = f"{query} LIMIT {limit_rows};"
+            sql = sql.rstrip().rstrip(";")
+            sql = f"{sql} LIMIT {limit};"
 
         # Execute the query
         with conn.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(sql)
             column_names = (
                 [col[0] for col in cursor.description] if cursor.description else []
             )
-            rows = cursor.fetchmany(limit_rows)
-        row_count = len(rows) if rows else 0
+            rows = cursor.fetchmany(limit)
 
-        if rows:
-            # Format the results as a markdown table
-            result = f"## Query Results (Database: {current_db}, Schema: {current_schema})\n\n"
-            result += f"Showing {row_count} row{'s' if row_count != 1 else ''}\n\n"
-            result += f"```sql\n{query}\n```\n\n"
+        if not rows:
+            return (
+                f"Query executed successfully in {current_db}.{current_schema}, "
+                "but returned no results."
+            )
 
-            # Create header row
-            result += "| " + " | ".join(column_names) + " |\n"
-            result += "| " + " | ".join(["---" for _ in column_names]) + " |\n"
+        row_count = len(rows)
+        result = (
+            f"## Query Results (Database: {current_db}, Schema: {current_schema})\n\n"
+        )
+        result += f"Showing {row_count} row{'s' if row_count != 1 else ''}\n\n"
+        result += f"```sql\n{sql}\n```\n\n"
+        result += _markdown_table(column_names, rows)
+        return result
 
-            # Add data rows
-            for row in rows:
-                formatted_values = []
-                for val in row:
-                    if val is None:
-                        formatted_values.append("NULL")
-                    else:
-                        # Format the value as string and escape any pipe characters
-                        # Truncate very long values to prevent huge tables
-                        val_str = str(val).replace("|", "\\|")
-                        if len(val_str) > 200:  # Truncate long values
-                            val_str = val_str[:197] + "..."
-                        formatted_values.append(val_str)
-                result += "| " + " | ".join(formatted_values) + " |\n"
-
-            return [mcp_types.TextContent(type="text", text=result)]
-        else:
-            return [
-                mcp_types.TextContent(
-                    type="text",
-                    text=f"Query executed successfully in {current_db}.{current_schema}, but returned no results.",
-                )
-            ]
-
-    except Exception as e:
-        return [
-            mcp_types.TextContent(type="text", text=f"Error executing query: {str(e)}")
-        ]
+    return await _run_db(impl)
 
 
 # Function to run the server with stdio interface
 def run_stdio_server() -> None:
     """Run the MCP server using stdin/stdout for communication."""
-
-    async def run() -> None:
-        server = create_server()
-
-        # Register all the Snowflake tools
-        @server.call_tool()
-        async def call_tool(
-            name: str, arguments: Optional[Dict[str, Any]] = None
-        ) -> Sequence[
-            Union[
-                mcp_types.TextContent,
-                mcp_types.ImageContent,
-                mcp_types.EmbeddedResource,
-            ]
-        ]:
-            if name == "list_databases":
-                return await handle_list_databases(name, arguments)
-            elif name == "list_views":
-                return await handle_list_views(name, arguments)
-            elif name == "describe_view":
-                return await handle_describe_view(name, arguments)
-            elif name == "query_view":
-                return await handle_query_view(name, arguments)
-            elif name == "execute_query":
-                return await handle_execute_query(name, arguments)
-            else:
-                return [
-                    mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")
-                ]
-
-        # Create tool definitions for all Snowflake tools
-        @server.list_tools()
-        async def list_tools() -> List[mcp_types.Tool]:
-            return [
-                mcp_types.Tool(
-                    name="list_databases",
-                    description="List all accessible Snowflake databases",
-                    inputSchema={"type": "object", "properties": {}, "required": []},
-                ),
-                mcp_types.Tool(
-                    name="list_views",
-                    description="List all views in a specified database and schema",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "database": {
-                                "type": "string",
-                                "description": "The database name (required)",
-                            },
-                            "schema": {
-                                "type": "string",
-                                "description": "The schema name (optional, will use current schema if not provided)",
-                            },
-                        },
-                        "required": ["database"],
-                    },
-                ),
-                mcp_types.Tool(
-                    name="describe_view",
-                    description="Get detailed information about a specific view including columns and SQL definition",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "database": {
-                                "type": "string",
-                                "description": "The database name (required)",
-                            },
-                            "schema": {
-                                "type": "string",
-                                "description": "The schema name (optional, will use current schema if not provided)",
-                            },
-                            "view_name": {
-                                "type": "string",
-                                "description": "The name of the view to describe (required)",
-                            },
-                        },
-                        "required": ["database", "view_name"],
-                    },
-                ),
-                mcp_types.Tool(
-                    name="query_view",
-                    description="Query data from a view with an optional row limit",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "database": {
-                                "type": "string",
-                                "description": "The database name (required)",
-                            },
-                            "schema": {
-                                "type": "string",
-                                "description": "The schema name (optional, will use current schema if not provided)",
-                            },
-                            "view_name": {
-                                "type": "string",
-                                "description": "The name of the view to query (required)",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of rows to return (default: 10)",
-                            },
-                        },
-                        "required": ["database", "view_name"],
-                    },
-                ),
-                mcp_types.Tool(
-                    name="execute_query",
-                    description="Execute read-only SQL queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH, USE). Use SHOW for metadata (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA for object details, ACCOUNT_USAGE for audit data.",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "SQL query to execute. Supports: SELECT, SHOW commands (TABLES/PIPES/TASKS/STREAMS/GRANTS/PROCEDURES/FUNCTIONS), INFORMATION_SCHEMA queries, ACCOUNT_USAGE queries, USE statements",
-                            },
-                            "database": {
-                                "type": "string",
-                                "description": "The database to use (optional)",
-                            },
-                            "schema": {
-                                "type": "string",
-                                "description": "The schema to use (optional)",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of rows to return (default: 100)",
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                ),
-            ]
-
-        init_options = server.create_initialization_options()
-
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream, init_options)
-
-    anyio.run(run)
+    server.run("stdio")
