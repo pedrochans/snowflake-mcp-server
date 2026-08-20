@@ -215,8 +215,9 @@ ruff format .     # format
 mypy snowflake_mcp_server/   # type check
 ```
 
-Want to add a tool? See `snowflake_mcp_server/utils/template.py` for starter
-templates and register the handler in `snowflake_mcp_server/main.py`.
+Want to add a tool? Define a typed async function in
+`snowflake_mcp_server/main.py` and decorate it with `@server.tool(...)` — the
+JSON Schema and argument validation are derived from the signature.
 
 ## Tech stack
 
