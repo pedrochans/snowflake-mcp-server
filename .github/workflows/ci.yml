@@ -1,0 +1,31 @@
+# CI scoped to this branch only: the workflow file lives here and the push
+# filter below means it never runs for main or any other branch.
+name: CI
+
+on:
+  push:
+    branches: [analysis/cross-platform-improvements]
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy snowflake_mcp_server/ tests/
+      - name: Tests
+        run: uv run pytest -q
