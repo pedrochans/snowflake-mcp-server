@@ -17,16 +17,17 @@ arguments, and raised exceptions are reported to the client as tool errors
 # snowflake.connector so corporate / VPN TLS interception works on every OS.
 import pip_system_certs.wrapt_requests  # noqa: F401  # isort: skip
 
+import contextlib
 import os
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional, TypeVar
 
 import anyio
 from dotenv import load_dotenv
 from mcp.server import MCPServer
-from mcp_types import ToolAnnotations
-from pydantic import Field
+from mcp_types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import BaseModel, Field
 from snowflake.connector import SnowflakeConnection
 
 from snowflake_mcp_server.utils.snowflake_conn import (
@@ -43,7 +44,7 @@ from snowflake_mcp_server.utils.sql_guard import (
 # Load environment variables from .env file
 load_dotenv()
 
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 
 # Every tool in this server is a read-only query; advertise that to clients.
 _READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False)
@@ -71,6 +72,9 @@ def get_snowflake_config() -> SnowflakeConfig:
         database=os.getenv("SNOWFLAKE_DATABASE"),
         schema_name=os.getenv("SNOWFLAKE_SCHEMA"),
         role=os.getenv("SNOWFLAKE_ROLE"),
+        statement_timeout_seconds=int(
+            os.getenv("SNOWFLAKE_STATEMENT_TIMEOUT_SECONDS", "300")
+        ),
     )
 
     # Only set private_key_path if using private key authentication
@@ -102,7 +106,10 @@ server: MCPServer[None] = MCPServer(
 )
 
 
-async def _run_db(impl: Callable[[SnowflakeConnection], str]) -> str:
+_T = TypeVar("_T")
+
+
+async def _run_db(impl: Callable[[SnowflakeConnection], _T]) -> _T:
     """Run a synchronous tool implementation off the event loop.
 
     The blocking Snowflake work is executed in a worker thread, and the whole
@@ -110,7 +117,7 @@ async def _run_db(impl: Callable[[SnowflakeConnection], str]) -> str:
     cannot corrupt the shared connection's session state.
     """
 
-    def work() -> str:
+    def work() -> _T:
         return connection_manager.run_with_connection(impl)
 
     try:
@@ -126,6 +133,110 @@ async def _run_db(impl: Callable[[SnowflakeConnection], str]) -> str:
                 "Snowsight and use the LOGIN_NAME value), not your display name."
             ) from e
         raise
+
+
+class QueryResult(BaseModel):
+    """Structured result for row-returning tools.
+
+    Sent to the client as ``structuredContent`` alongside the human-readable
+    markdown table in the text content.
+    """
+
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    row_count: int
+    truncated: bool = Field(
+        description="True when the row limit was hit; more rows may exist"
+    )
+    database: Optional[str] = None
+    schema_name: Optional[str] = None
+
+
+def _to_json_value(val: object) -> Any:
+    """Coerce a Snowflake cell value into a JSON-safe value."""
+    if val is None or isinstance(val, (bool, int, float, str)):
+        out = val
+    else:
+        out = str(val)  # Decimal, datetime, bytes, VARIANT, ...
+    if isinstance(out, str) and len(out) > _MAX_CELL_CHARS:
+        out = out[: _MAX_CELL_CHARS - 3] + "..."
+    return out
+
+
+def _query_result(
+    column_names: Sequence[str],
+    rows: Sequence[Sequence[object]],
+    limit: int,
+    database: Optional[str] = None,
+    schema_name: Optional[str] = None,
+) -> QueryResult:
+    return QueryResult(
+        columns=list(column_names),
+        rows=[
+            {col: _to_json_value(val) for col, val in zip(column_names, row)}
+            for row in rows
+        ],
+        row_count=len(rows),
+        truncated=len(rows) >= limit,
+        database=database,
+        schema_name=schema_name,
+    )
+
+
+def _hybrid_result(markdown: str, structured: QueryResult) -> CallToolResult:
+    """Markdown text for humans/LLMs plus typed structuredContent for clients."""
+    return CallToolResult(
+        content=[TextContent(type="text", text=markdown)],
+        structured_content=structured.model_dump(mode="json"),
+    )
+
+
+@contextlib.contextmanager
+def _session_context(
+    conn: SnowflakeConnection, database: Optional[str], schema: Optional[str]
+) -> Iterator[tuple[str, str]]:
+    """Temporarily switch the session's USE context and restore it on exit.
+
+    The shared connection is long-lived, so a ``USE`` issued for one tool call
+    must not leak into the next. Yields the effective ``(database, schema)``
+    after any requested switch. Restoration is best-effort: it never masks the
+    result (or error) of the wrapped operation.
+    """
+    original: Optional[tuple[Any, Any]] = None
+    if database or schema:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
+            original = cursor.fetchone()
+
+    with conn.cursor() as cursor:
+        if database:
+            cursor.execute(f"USE DATABASE {database}")
+        if schema:
+            cursor.execute(f"USE SCHEMA {schema}")
+        cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
+        row = cursor.fetchone()
+    current = (
+        str(row[0]) if row and row[0] else "Unknown",
+        str(row[1]) if row and row[1] else "Unknown",
+    )
+
+    try:
+        yield current
+    finally:
+        if original is not None:
+            orig_db, orig_schema = original
+            try:
+                with conn.cursor() as cursor:
+                    if orig_db:
+                        cursor.execute(
+                            f"USE DATABASE {validate_identifier(str(orig_db))}"
+                        )
+                        if orig_schema:
+                            cursor.execute(
+                                f"USE SCHEMA {validate_identifier(str(orig_schema))}"
+                            )
+            except Exception:
+                pass  # best-effort restore; never mask the query result
 
 
 def _resolve_schema(conn: SnowflakeConnection, schema: Optional[str]) -> str:
@@ -200,17 +311,23 @@ async def list_views(
 
     def impl(conn: SnowflakeConnection) -> str:
         db = validate_identifier(database, "database")
-        with conn.cursor() as cursor:
-            cursor.execute(f"USE DATABASE {db}")
-        sch = _resolve_schema(conn, schema)
+        if schema:
+            validate_identifier(schema, "schema")
 
-        views = []
-        with conn.cursor() as cursor:
-            cursor.execute(f"SHOW VIEWS IN {db}.{sch}")
-            for row in cursor:
-                view_name = row[1]  # View name is in the second column
-                created_on = row[5]  # Creation date
-                views.append(f"{view_name} (created: {created_on})")
+        with _session_context(conn, db, schema) as (_, current_schema):
+            sch = schema or current_schema
+            if sch == "Unknown":
+                raise RuntimeError(
+                    "Could not determine current schema; pass the schema argument"
+                )
+
+            views = []
+            with conn.cursor() as cursor:
+                cursor.execute(f"SHOW VIEWS IN {db}.{sch}")
+                for row in cursor:
+                    view_name = row[1]  # View name is in the second column
+                    created_on = row[5]  # Creation date
+                    views.append(f"{view_name} (created: {created_on})")
 
         if not views:
             return f"No views found in {db}.{sch}"
@@ -290,10 +407,10 @@ async def query_view(
     limit: Annotated[
         int, Field(description="Maximum number of rows to return", ge=1)
     ] = 10,
-) -> str:
+) -> QueryResult:
     """Tool handler to query data from a view with optional limit."""
 
-    def impl(conn: SnowflakeConnection) -> str:
+    def impl(conn: SnowflakeConnection) -> CallToolResult:
         db = validate_identifier(database, "database")
         view = validate_identifier(view_name, "view_name")
         sch = _resolve_schema(conn, schema)
@@ -307,13 +424,18 @@ async def query_view(
             rows = cursor.fetchall()
 
         if not rows:
-            return f"No data found in view {full_view_name} or the view is empty."
+            markdown = f"No data found in view {full_view_name} or the view is empty."
+        else:
+            markdown = f"## Data from {full_view_name} (Showing {len(rows)} rows)\n\n"
+            markdown += _markdown_table(column_names, rows)
+        structured = _query_result(
+            column_names, rows, limit, database=db, schema_name=sch
+        )
+        return _hybrid_result(markdown, structured)
 
-        result = f"## Data from {full_view_name} (Showing {len(rows)} rows)\n\n"
-        result += _markdown_table(column_names, rows)
-        return result
-
-    return await _run_db(impl)
+    # A CallToolResult carrying both markdown text and structuredContent is a
+    # supported return value; the annotation drives the outputSchema.
+    return await _run_db(impl)  # type: ignore[arg-type,return-value]
 
 
 @server.tool(
@@ -345,61 +467,57 @@ async def execute_query(
     limit: Annotated[
         int, Field(description="Maximum number of rows to return", ge=1)
     ] = 100,
-) -> str:
+) -> QueryResult:
     """Tool handler to execute read-only SQL queries against Snowflake."""
     # Validate that the query is read-only before touching the database
     # (raises ReadOnlyViolation, surfaced to the client as a tool error).
     assert_read_only(query)
 
-    def impl(conn: SnowflakeConnection) -> str:
+    def impl(conn: SnowflakeConnection) -> CallToolResult:
         sql = query
         db = validate_identifier(database, "database") if database else None
         sch = validate_identifier(schema, "schema") if schema else None
 
-        # Switch context (if requested) and read it back for display
-        with conn.cursor() as context_cursor:
-            if db:
-                context_cursor.execute(f"USE DATABASE {db}")
-            if sch:
-                context_cursor.execute(f"USE SCHEMA {sch}")
-            context_cursor.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()")
-            context_result = context_cursor.fetchone()
-        if context_result:
-            current_db, current_schema = context_result
-        else:
-            current_db, current_schema = "Unknown", "Unknown"
+        # Switch context for this call only; restored when the block exits
+        with _session_context(conn, db, sch) as (current_db, current_schema):
+            # Only add a LIMIT clause for row-returning queries (SELECT/WITH)
+            needs_limit = first_statement_verb(sql) in {"select", "with"}
+            if needs_limit and "LIMIT " not in sql.upper():
+                # Remove any trailing semicolon before adding the LIMIT clause
+                sql = sql.rstrip().rstrip(";")
+                sql = f"{sql} LIMIT {limit};"
 
-        # Only add a LIMIT clause for row-returning queries (SELECT/WITH)
-        needs_limit = first_statement_verb(sql) in {"select", "with"}
-        if needs_limit and "LIMIT " not in sql.upper():
-            # Remove any trailing semicolon before adding the LIMIT clause
-            sql = sql.rstrip().rstrip(";")
-            sql = f"{sql} LIMIT {limit};"
-
-        # Execute the query
-        with conn.cursor() as cursor:
-            cursor.execute(sql)
-            column_names = (
-                [col[0] for col in cursor.description] if cursor.description else []
-            )
-            rows = cursor.fetchmany(limit)
+            # Execute the query
+            with conn.cursor() as cursor:
+                cursor.execute(sql)
+                column_names = (
+                    [col[0] for col in cursor.description] if cursor.description else []
+                )
+                rows = cursor.fetchmany(limit)
 
         if not rows:
-            return (
+            markdown = (
                 f"Query executed successfully in {current_db}.{current_schema}, "
                 "but returned no results."
             )
+        else:
+            row_count = len(rows)
+            markdown = (
+                f"## Query Results "
+                f"(Database: {current_db}, Schema: {current_schema})\n\n"
+            )
+            markdown += f"Showing {row_count} row{'s' if row_count != 1 else ''}\n\n"
+            markdown += f"```sql\n{sql}\n```\n\n"
+            markdown += _markdown_table(column_names, rows)
 
-        row_count = len(rows)
-        result = (
-            f"## Query Results (Database: {current_db}, Schema: {current_schema})\n\n"
+        structured = _query_result(
+            column_names, rows, limit, database=current_db, schema_name=current_schema
         )
-        result += f"Showing {row_count} row{'s' if row_count != 1 else ''}\n\n"
-        result += f"```sql\n{sql}\n```\n\n"
-        result += _markdown_table(column_names, rows)
-        return result
+        return _hybrid_result(markdown, structured)
 
-    return await _run_db(impl)
+    # A CallToolResult carrying both markdown text and structuredContent is a
+    # supported return value; the annotation drives the outputSchema.
+    return await _run_db(impl)  # type: ignore[arg-type,return-value]
 
 
 # Function to run the server with stdio interface

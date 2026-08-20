@@ -234,3 +234,30 @@ def test_run_with_connection_reconnects_on_expired_session(
             mgr._last_error,
             mgr._config,
         ) = saved
+
+
+@patch("snowflake.connector.connect")
+def test_statement_timeout_passed_as_session_parameter(
+    mock_connect: MagicMock,
+) -> None:
+    """statement_timeout_seconds becomes STATEMENT_TIMEOUT_IN_SECONDS."""
+    config = SnowflakeConfig(
+        account="test_account",
+        user="test_user",
+        auth_type=AuthType.EXTERNAL_BROWSER,
+        statement_timeout_seconds=120,
+    )
+    get_snowflake_connection(config)
+    kwargs = mock_connect.call_args.kwargs
+    assert kwargs["session_parameters"] == {"STATEMENT_TIMEOUT_IN_SECONDS": 120}
+
+
+@patch("snowflake.connector.connect")
+def test_statement_timeout_omitted_when_unset(mock_connect: MagicMock) -> None:
+    config = SnowflakeConfig(
+        account="test_account",
+        user="test_user",
+        auth_type=AuthType.EXTERNAL_BROWSER,
+    )
+    get_snowflake_connection(config)
+    assert "session_parameters" not in mock_connect.call_args.kwargs

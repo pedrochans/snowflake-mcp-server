@@ -78,6 +78,9 @@ class SnowflakeConfig(BaseModel):
         None  # Renamed from schema to avoid conflict with BaseModel
     )
     role: Optional[str] = None
+    # Server-side per-statement timeout (STATEMENT_TIMEOUT_IN_SECONDS). Keeps a
+    # runaway query from holding the connection lock forever. None/0 disables.
+    statement_timeout_seconds: Optional[int] = None
 
     @field_validator("private_key_path")
     @classmethod
@@ -406,6 +409,10 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
         conn_params["schema"] = config.schema_name
     if config.role:
         conn_params["role"] = config.role
+    if config.statement_timeout_seconds:
+        conn_params["session_parameters"] = {
+            "STATEMENT_TIMEOUT_IN_SECONDS": config.statement_timeout_seconds
+        }
 
     # The external-browser authenticator prints status text ("Going to open:
     # https://...") to stdout. Under the stdio MCP transport stdout is the
