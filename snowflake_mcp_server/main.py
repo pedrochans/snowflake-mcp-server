@@ -27,7 +27,7 @@ import anyio
 from dotenv import load_dotenv
 from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from snowflake.connector import SnowflakeConnection
 
 from snowflake_mcp_server.utils.snowflake_conn import (
@@ -64,10 +64,20 @@ def get_snowflake_config() -> SnowflakeConfig:
         else AuthType.EXTERNAL_BROWSER
     )
 
-    config = SnowflakeConfig(
+    private_key_auth = auth_type == AuthType.PRIVATE_KEY
+    private_key_passphrase = (
+        os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE") if private_key_auth else None
+    )
+    return SnowflakeConfig(
         account=os.getenv("SNOWFLAKE_ACCOUNT", ""),
         user=os.getenv("SNOWFLAKE_USER", ""),
         auth_type=auth_type,
+        private_key_path=(
+            os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH", "") if private_key_auth else None
+        ),
+        private_key_passphrase=(
+            SecretStr(private_key_passphrase) if private_key_passphrase else None
+        ),
         warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
         database=os.getenv("SNOWFLAKE_DATABASE"),
         schema_name=os.getenv("SNOWFLAKE_SCHEMA"),
@@ -76,12 +86,6 @@ def get_snowflake_config() -> SnowflakeConfig:
             os.getenv("SNOWFLAKE_STATEMENT_TIMEOUT_SECONDS", "300")
         ),
     )
-
-    # Only set private_key_path if using private key authentication
-    if auth_type == AuthType.PRIVATE_KEY:
-        config.private_key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH", "")
-
-    return config
 
 
 @asynccontextmanager

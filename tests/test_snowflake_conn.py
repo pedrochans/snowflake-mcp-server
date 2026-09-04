@@ -2,16 +2,24 @@
 
 import pip_system_certs.wrapt_requests  # noqa: F401  # isort: skip
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import (
+    BestAvailableEncryption,
+    Encoding,
+    PrivateFormat,
+)
+from pydantic import SecretStr
 
 from snowflake_mcp_server.utils.snowflake_conn import (
     AuthType,
     SnowflakeConfig,
     SnowflakeConnectionManager,
     get_snowflake_connection,
+    load_private_key,
 )
 
 
@@ -29,6 +37,7 @@ def snowflake_config_private_key() -> SnowflakeConfig:
         user="testuser",
         auth_type=AuthType.PRIVATE_KEY,
         private_key_path="/path/to/key.p8",
+        private_key_passphrase=SecretStr("test-passphrase"),
         warehouse="test_warehouse",
         database="test_database",
         schema_name="test_schema",
@@ -68,7 +77,9 @@ def test_get_snowflake_connection_private_key(
     conn = get_snowflake_connection(snowflake_config_private_key)
 
     # Assertions
-    mock_load_key.assert_called_once_with(snowflake_config_private_key.private_key_path)
+    mock_load_key.assert_called_once_with(
+        snowflake_config_private_key.private_key_path, "test-passphrase"
+    )
     mock_connect.assert_called_once_with(
         account=snowflake_config_private_key.account,
         user=snowflake_config_private_key.user,
@@ -79,6 +90,23 @@ def test_get_snowflake_connection_private_key(
         role=snowflake_config_private_key.role,
     )
     assert conn == mock_connection
+
+
+def test_load_private_key_accepts_encrypted_pkcs8(tmp_path: Path) -> None:
+    """Encrypted service-account keys can be loaded with their passphrase."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key_path = tmp_path / "encrypted-key.p8"
+    key_path.write_bytes(
+        private_key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.PKCS8,
+            BestAvailableEncryption(b"test-passphrase"),
+        )
+    )
+
+    loaded_key = load_private_key(str(key_path), "test-passphrase")
+
+    assert loaded_key.private_numbers() == private_key.private_numbers()
 
 
 @patch("snowflake.connector.connect")

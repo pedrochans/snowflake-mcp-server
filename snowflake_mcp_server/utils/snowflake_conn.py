@@ -31,7 +31,7 @@ import snowflake.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from pydantic import BaseModel, ValidationInfo, field_validator
+from pydantic import BaseModel, SecretStr, ValidationInfo, field_validator
 from snowflake.connector import SnowflakeConnection
 from snowflake.connector.errors import DatabaseError, OperationalError
 
@@ -72,6 +72,7 @@ class SnowflakeConfig(BaseModel):
     user: str
     auth_type: AuthType
     private_key_path: Optional[str] = None
+    private_key_passphrase: Optional[SecretStr] = None
     warehouse: Optional[str] = None
     database: Optional[str] = None
     schema_name: Optional[str] = (
@@ -96,12 +97,14 @@ class SnowflakeConfig(BaseModel):
         return v
 
 
-def load_private_key(private_key_path: str) -> rsa.RSAPrivateKey:
+def load_private_key(
+    private_key_path: str, passphrase: Optional[str] = None
+) -> rsa.RSAPrivateKey:
     """Load private key from file."""
     with open(private_key_path, "rb") as key_file:
         p_key = load_pem_private_key(
             key_file.read(),
-            password=None,
+            password=passphrase.encode() if passphrase else None,
             backend=default_backend(),
         )
         if not isinstance(p_key, rsa.RSAPrivateKey):
@@ -390,7 +393,12 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
             raise ValueError(
                 "Private key path is required for private key authentication"
             )
-        private_key = load_private_key(config.private_key_path)
+        passphrase = (
+            config.private_key_passphrase.get_secret_value()
+            if config.private_key_passphrase
+            else None
+        )
+        private_key = load_private_key(config.private_key_path, passphrase)
         conn_params["private_key"] = private_key
     elif config.auth_type == AuthType.EXTERNAL_BROWSER:
         conn_params["authenticator"] = "externalbrowser"

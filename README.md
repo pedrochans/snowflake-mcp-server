@@ -129,6 +129,7 @@ SNOWFLAKE_AUTH_TYPE=private_key
 SNOWFLAKE_ACCOUNT='ORG-ACCOUNT'
 SNOWFLAKE_USER='service_account'
 SNOWFLAKE_PRIVATE_KEY_PATH=/absolute/path/to/rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE='key_passphrase' # encrypted keys only
 SNOWFLAKE_WAREHOUSE='YOUR_WH'
 SNOWFLAKE_DATABASE='YOUR_DB'
 SNOWFLAKE_SCHEMA='YOUR_SCHEMA'
@@ -141,6 +142,7 @@ SNOWFLAKE_ROLE='YOUR_ROLE'
 | `SNOWFLAKE_ACCOUNT` | yes | — | Account identifier (e.g. `ORG-ACCOUNT`) |
 | `SNOWFLAKE_USER` | yes | — | Username / email |
 | `SNOWFLAKE_PRIVATE_KEY_PATH` | key auth | — | Absolute path to the `.p8` key |
+| `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | encrypted key | — | Passphrase for an encrypted PKCS#8 key |
 | `SNOWFLAKE_WAREHOUSE` | no | — | Warehouse |
 | `SNOWFLAKE_DATABASE` | no | — | Default database |
 | `SNOWFLAKE_SCHEMA` | no | — | Default schema |
