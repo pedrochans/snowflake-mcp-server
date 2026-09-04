@@ -1,0 +1,21 @@
+snowflake_mcp_server/utils/sql_guard.py
+  s_a0c003852dab11::t_8b7764b239428f 24,50-53,57
+uv.lock
+  s_a0c003852dab11::t_6ef807ade361bc 21,25,27,29,43,45-102,116,123,125,130,137,139,369,371,373,387-481,486,491-531,536,538,540,807,825,827,832,838,840,968,970,972,995,1003,1005,1010,1015-1080,1343-1363,1402,1423-1444,1503,1505,1507,1512,1518,1520
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "83f20e878d3ac561aeb7a7ec9db67e74c61810f2",
+  "prompts": {},
+  "sessions": {
+    "s_a0c003852dab11": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98655075-aa1e-495f-9d6c-7714472fd6b4",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "DiegoMN <diegomn@ext.inditex.com>"
+    }
+  }
+}
