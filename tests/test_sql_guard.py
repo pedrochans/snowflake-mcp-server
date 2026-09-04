@@ -23,6 +23,12 @@ READ_ONLY_QUERIES = [
     "USE DATABASE FOO",
     "USE SCHEMA WORK",
     "SELECT current_database(), current_schema()",
+    # Set operators: sqlglot keys these as union/intersect/except, not select
+    "SELECT 1 UNION ALL SELECT 2",
+    "SELECT 1 UNION SELECT 2 UNION ALL SELECT 3",
+    "WITH x AS (SELECT 1 a) SELECT a FROM x UNION ALL SELECT 2",
+    "SELECT 1 INTERSECT SELECT 1",
+    "SELECT 1 EXCEPT SELECT 2",
 ]
 
 WRITE_QUERIES = [
@@ -38,6 +44,8 @@ WRITE_QUERIES = [
     "REVOKE SELECT ON t FROM ROLE r",
     "CALL my_proc()",
     "SELECT 1; DROP TABLE t",  # multi-statement smuggling
+    # A set operator must not launder a write into the allow-list
+    "INSERT INTO t SELECT 1 UNION ALL SELECT 2",
     "",
     "   ",
 ]

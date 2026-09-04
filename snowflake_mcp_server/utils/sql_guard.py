@@ -26,7 +26,22 @@ from sqlglot.errors import ParseError
 from sqlglot.expressions import Expression
 
 # Statement types (sqlglot expression keys) considered read-only.
-READ_ONLY_KEYS = {"select", "with", "show", "describe", "use", "explain"}
+# ``union``/``intersect``/``except`` are the set operators: sqlglot gives a
+# ``SELECT ... UNION ALL SELECT ...`` the key of the operator, not "select", so
+# they must be listed here or a perfectly read-only query is rejected. Their
+# operands can only ever be SELECT or another set operation, never DML, so
+# accepting them does not widen what the guard allows.
+READ_ONLY_KEYS = {
+    "select",
+    "with",
+    "show",
+    "describe",
+    "use",
+    "explain",
+    "union",
+    "intersect",
+    "except",
+}
 
 # Leading keywords accepted when sqlglot can only classify a statement as a
 # generic ``Command`` (it could not build a typed AST). Anything not in this
