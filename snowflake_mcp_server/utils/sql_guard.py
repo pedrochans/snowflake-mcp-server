@@ -21,6 +21,7 @@ import re
 from typing import List, Optional, cast
 
 import sqlglot
+from mcp.server.mcpserver.exceptions import ToolError
 from sqlglot.errors import ParseError
 from sqlglot.expressions import Expression
 
@@ -46,11 +47,14 @@ READ_ONLY_COMMAND_PREFIXES = {
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
-class ReadOnlyViolation(ValueError):
+class ReadOnlyViolation(ToolError, ValueError):
+    # ToolError: the MCP SDK (>=2.1) only forwards ToolError messages to the
+    # client; anything else is masked as a generic crash. These are deliberate,
+    # user-facing validation errors, so the model must see the reason.
     """Raised when a query contains a non read-only statement."""
 
 
-class InvalidIdentifier(ValueError):
+class InvalidIdentifier(ToolError, ValueError):
     """Raised when an identifier fails validation."""
 
 
