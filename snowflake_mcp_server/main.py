@@ -2,8 +2,8 @@
 
 This module provides a Model Context Protocol (MCP) server that allows Claude
 to perform read-only operations against Snowflake databases. It connects to
-Snowflake using either service account authentication with a private key or
-external browser authentication. It exposes various tools for querying database
+Snowflake using service account authentication with a private key, OAuth for
+local applications, or external browser (SAML SSO) authentication. It exposes various tools for querying database
 metadata and data, including support for multi-view and multi-database queries.
 
 The server is built on the high-level ``MCPServer`` API (mcp >= 2.0): each tool
@@ -57,12 +57,14 @@ _MAX_CELL_CHARS = 200
 # Initialize Snowflake configuration from environment variables
 def get_snowflake_config() -> SnowflakeConfig:
     """Load Snowflake configuration from environment variables."""
-    auth_type_str = os.getenv("SNOWFLAKE_AUTH_TYPE", "private_key").lower()
-    auth_type = (
-        AuthType.PRIVATE_KEY
-        if auth_type_str == "private_key"
-        else AuthType.EXTERNAL_BROWSER
-    )
+    auth_type_str = os.getenv("SNOWFLAKE_AUTH_TYPE", "private_key").strip().lower()
+    try:
+        auth_type = AuthType(auth_type_str)
+    except ValueError:
+        valid = ", ".join(t.value for t in AuthType)
+        raise ValueError(
+            f"Invalid SNOWFLAKE_AUTH_TYPE {auth_type_str!r}; expected one of: {valid}"
+        ) from None
 
     private_key_auth = auth_type == AuthType.PRIVATE_KEY
     private_key_passphrase = (
@@ -128,6 +130,14 @@ async def _run_db(impl: Callable[[SnowflakeConnection], _T]) -> _T:
         return await anyio.to_thread.run_sync(work)
     except Exception as e:
         message = str(e)
+        # 390309 with OAuth: the token is bound to the Snowflake user NAME, so
+        # SNOWFLAKE_USER set to a LOGIN_NAME (e.g. an email) is rejected.
+        if "390309" in message or "tied to the access token" in message:
+            raise RuntimeError(
+                f"{message}\n\nHint: with OAuth, SNOWFLAKE_USER must be your "
+                "Snowflake user NAME (run `SELECT CURRENT_USER();` or "
+                "`DESC USER <you>;` and use the NAME value), not your LOGIN_NAME."
+            ) from e
         # 250001 with external-browser auth almost always means SNOWFLAKE_USER
         # is not the user's Snowflake LOGIN_NAME. Point the user at the fix.
         if "250001" in message or "differs from the user" in message:

@@ -267,3 +267,56 @@ async def test_tools_advertise_output_schema(
         schema = by_name[name].output_schema
         assert schema is not None, name
         assert set(schema["required"]) >= {"columns", "rows", "row_count"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("oauth", "oauth"),
+        (" OAuth ", "oauth"),
+        ("external_browser", "external_browser"),
+        ("private_key", "private_key"),
+    ],
+)
+def test_auth_type_parsing(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: str
+) -> None:
+    monkeypatch.setenv("SNOWFLAKE_AUTH_TYPE", value)
+    monkeypatch.setenv("SNOWFLAKE_PRIVATE_KEY_PATH", "/k.p8")
+    assert main.get_snowflake_config().auth_type.value == expected
+
+
+def test_auth_type_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A typo must fail loudly instead of silently falling back to the browser."""
+    monkeypatch.setenv("SNOWFLAKE_AUTH_TYPE", "oath")
+    with pytest.raises(ValueError, match="expected one of"):
+        main.get_snowflake_config()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("error", "hint"),
+    [
+        (
+            "390309 (08001): Failed to login: The user you were trying to "
+            "authenticate as differs from the user tied to the access token.",
+            "with OAuth, SNOWFLAKE_USER must be your Snowflake user NAME",
+        ),
+        (
+            "250001: The user you were trying to authenticate as differs from "
+            "the user currently logged in at the IDP.",
+            "with external-browser SSO, SNOWFLAKE_USER must be your Snowflake "
+            "LOGIN_NAME",
+        ),
+    ],
+)
+async def test_user_mismatch_errors_get_auth_specific_hint(
+    monkeypatch: pytest.MonkeyPatch, error: str, hint: str
+) -> None:
+    def fail(operation: Callable[[SnowflakeConnection], Any]) -> Any:
+        raise RuntimeError(error)
+
+    monkeypatch.setattr(main.connection_manager, "run_with_connection", fail)
+    with pytest.raises(RuntimeError) as excinfo:
+        await main._run_db(lambda conn: None)
+    assert hint in str(excinfo.value)

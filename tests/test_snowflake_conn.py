@@ -136,6 +136,43 @@ def test_get_snowflake_connection_browser_auth(
     assert conn == mock_connection
 
 
+@patch("snowflake.connector.connect")
+def test_get_snowflake_connection_oauth(mock_connect: MagicMock) -> None:
+    """OAuth uses the LOCAL_APPLICATION integration and caches tokens."""
+    config = SnowflakeConfig(
+        account="testaccount",
+        user="TESTUSER",
+        auth_type=AuthType.OAUTH,
+        warehouse="test_warehouse",
+        role="test_role",
+    )
+    mock_connect.return_value = MagicMock()
+
+    get_snowflake_connection(config)
+
+    mock_connect.assert_called_once_with(
+        account="testaccount",
+        user="TESTUSER",
+        authenticator="OAUTH_AUTHORIZATION_CODE",
+        oauth_client_id="LOCAL_APPLICATION",
+        client_store_temporary_credential=True,
+        warehouse="test_warehouse",
+        role="test_role",
+    )
+
+
+def test_oauth_does_not_start_background_refresh() -> None:
+    """OAuth reconnects lazily: an idle refresh could pop an unattended browser."""
+    mgr = SnowflakeConnectionManager()  # singleton
+    prev_config, prev_thread = mgr._config, mgr._refresh_thread
+    try:
+        mgr._refresh_thread = None
+        mgr.initialize(SnowflakeConfig(account="a", user="u", auth_type=AuthType.OAUTH))
+        assert mgr._refresh_thread is None
+    finally:
+        mgr._config, mgr._refresh_thread = prev_config, prev_thread
+
+
 def test_run_with_connection_runs_operation_under_lock() -> None:
     """run_with_connection passes the live connection to the operation and
     returns its result without reconnecting when the connection is healthy."""

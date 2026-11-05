@@ -24,9 +24,11 @@ and any other MCP client, on **Windows, macOS and Linux**.
   and `USE` are accepted; everything else is rejected before it reaches Snowflake.
 - 🛡️ **Injection-safe** — object identifiers are validated against an allow-list
   before being used in queries.
-- 🔑 **Flexible auth** — external-browser SSO or service-account key-pair.
-- 💾 **SSO token caching** — after the first login the token is stored in the OS
-  credential store, so reconnects don't reopen a browser.
+- 🔑 **Flexible auth** — OAuth (local application), external-browser SSO or
+  service-account key-pair.
+- 💾 **Token caching** — with OAuth the access and refresh tokens are stored in
+  the OS credential store and renewed silently, so restarts and reconnects don't
+  reopen a browser.
 - 🌐 **Corporate SSL / VPN friendly** — uses the operating system trust store on
   every platform (Windows cert store, macOS Keychain, Linux CA bundle).
 - ♻️ **Connection pooling** with automatic background refresh.
@@ -102,9 +104,32 @@ Verify: `uv pip list` should show `snowflake-mcp-server`.
 Copy the example that matches your authentication method and edit it:
 
 ```bash
-cp .env.browser.example .env        # external browser (SSO)
+cp .env.oauth.example .env          # OAuth, browser only on first login (recommended)
+# cp .env.browser.example .env      # external browser (SAML SSO)
 # cp .env.private_key.example .env  # service account key-pair
 ```
+
+### OAuth (recommended for interactive use)
+
+```dotenv
+SNOWFLAKE_AUTH_TYPE=oauth
+SNOWFLAKE_ACCOUNT='ORG-ACCOUNT'
+SNOWFLAKE_USER='USER_NAME'   # user NAME, not LOGIN_NAME
+SNOWFLAKE_WAREHOUSE='YOUR_WH'
+SNOWFLAKE_DATABASE='YOUR_DB'
+SNOWFLAKE_SCHEMA='YOUR_SCHEMA'
+SNOWFLAKE_ROLE='YOUR_ROLE'
+```
+
+Uses Snowflake's built-in `SNOWFLAKE$LOCAL_APPLICATION` integration (authorization
+code + PKCE, redirect to `127.0.0.1`). A browser window opens on the first login
+only; the access and refresh tokens are then kept in the OS credential store and
+renewed silently, so restarts and reconnects don't reopen the browser until the
+refresh token expires (the integration's `OAUTH_REFRESH_TOKEN_VALIDITY`). Unlike
+external-browser SSO, this does not depend on the account allowing ID tokens.
+
+`SNOWFLAKE_USER` must be your Snowflake user **NAME** (`SELECT CURRENT_USER();`),
+which can differ from the `LOGIN_NAME` used by external-browser SSO.
 
 ### External browser (SSO)
 
@@ -119,8 +144,9 @@ SNOWFLAKE_ROLE='YOUR_ROLE'
 SNOWFLAKE_CONN_REFRESH_HOURS=8
 ```
 
-A browser window opens on first launch to complete the login. The token is then
-cached, so you won't be prompted again until it expires.
+A browser window opens on first launch to complete the login. The token is only
+cached if the account allows ID tokens (`ALLOW_ID_TOKEN`); otherwise every new
+connection reopens the browser — prefer OAuth in that case.
 
 ### Private key (service account)
 
@@ -138,9 +164,9 @@ SNOWFLAKE_ROLE='YOUR_ROLE'
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SNOWFLAKE_AUTH_TYPE` | yes | `private_key` | `external_browser` or `private_key` |
+| `SNOWFLAKE_AUTH_TYPE` | yes | `private_key` | `oauth`, `external_browser` or `private_key` |
 | `SNOWFLAKE_ACCOUNT` | yes | — | Account identifier (e.g. `ORG-ACCOUNT`) |
-| `SNOWFLAKE_USER` | yes | — | Username / email |
+| `SNOWFLAKE_USER` | yes | — | User NAME (OAuth), LOGIN_NAME (external browser) or service user |
 | `SNOWFLAKE_PRIVATE_KEY_PATH` | key auth | — | Absolute path to the `.p8` key |
 | `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | encrypted key | — | Passphrase for an encrypted PKCS#8 key |
 | `SNOWFLAKE_WAREHOUSE` | no | — | Warehouse |
@@ -203,9 +229,10 @@ and VS Code** — plus ready-made config files — is in
 | Headless Linux server | No browser available — use private-key auth. |
 | `pip`/build errors on Windows | Install the Visual C++ Build Tools and restart. |
 | Corporate TLS / VPN errors | The server already uses the OS trust store; make sure your corporate root CA is installed there. |
-| Repeated SSO popups | Ensure `keyring` is installed (it is, via the `secure-local-storage` extra) so the token can be cached. |
+| Repeated SSO popups | With `external_browser` the token is only cached if the account allows ID tokens. Switch to `SNOWFLAKE_AUTH_TYPE=oauth`. |
+| `390309 ... differs from the user tied to the access token` | With OAuth, `SNOWFLAKE_USER` must be your Snowflake user **NAME** (`SELECT CURRENT_USER();`), not your LOGIN_NAME/email. |
 | `250001 ... user differs from the user currently logged in at the IDP` | `SNOWFLAKE_USER` must be your Snowflake **LOGIN_NAME**, not your display name. Run `DESC USER <you>;` in Snowsight and copy the `LOGIN_NAME` value exactly (often your corporate email/UPN). |
-| Tool calls fail after the server sat idle for many hours | Expected with browser auth: the SSO session expires. The first query after a long idle now reconnects automatically and reopens the browser to re-authenticate — just complete the login. |
+| Tool calls fail after the server sat idle for many hours | Expected with `external_browser`: the SSO session expires. The first query after a long idle now reconnects automatically and reopens the browser to re-authenticate — just complete the login. |
 
 ## Development
 

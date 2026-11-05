@@ -1,16 +1,16 @@
 """Snowflake connection utilities.
 
 This module provides utility functions and classes for establishing secure connections
-to Snowflake using either service account authentication with private key or external
-browser authentication. It handles the configuration parsing and security aspects of
-connecting to Snowflake databases.
+to Snowflake using service account authentication with a private key, OAuth for local
+applications, or external browser (SAML SSO) authentication. It handles the
+configuration parsing and security aspects of connecting to Snowflake databases.
 
 The primary components are:
 - SnowflakeConfig: A Pydantic model that validates connection parameters
 - SnowflakeConnectionManager: A singleton class that manages persistent connections
 - load_private_key: A function to securely load RSA private keys
-- get_snowflake_connection: A function that establishes connections using key pair
-  auth or browser auth
+- get_snowflake_connection: A function that establishes connections using key pair,
+  OAuth or browser auth
 """
 
 # pip-system-certs patches the SSL stack to use the operating system trust
@@ -63,6 +63,8 @@ class AuthType(str, Enum):
 
     PRIVATE_KEY = "private_key"
     EXTERNAL_BROWSER = "external_browser"
+    # OAuth with Snowflake's built-in SNOWFLAKE$LOCAL_APPLICATION integration.
+    OAUTH = "oauth"
 
 
 class SnowflakeConfig(BaseModel):
@@ -193,6 +195,8 @@ class SnowflakeConnectionManager:
             # and blocks every tool call on the lock. For browser auth we skip
             # the timer and reconnect lazily on demand (when the user is there),
             # recovering expired sessions via the retry in run_with_connection.
+            # OAuth renews silently from the cached refresh token, but once that
+            # expires it needs the browser too, so it also reconnects lazily.
             needs_refresh_thread = config.auth_type == AuthType.PRIVATE_KEY
             if needs_refresh_thread and (
                 self._refresh_thread is None or not self._refresh_thread.is_alive()
@@ -381,7 +385,7 @@ class SnowflakeConnectionManager:
 
 
 def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
-    """Create a connection to Snowflake using key pair or external browser auth."""
+    """Create a connection to Snowflake using key pair, OAuth or browser auth."""
     conn_params: Dict[str, Any] = {
         "account": config.account,
         "user": config.user,
@@ -408,6 +412,17 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
         # handles the OS credential store natively (no keyring extra). Caching
         # only happens if the account allows ID tokens (ALLOW_ID_TOKEN).
         conn_params["client_store_temporary_credential"] = True
+    elif config.auth_type == AuthType.OAUTH:
+        # OAuth authorization code + PKCE against the built-in
+        # SNOWFLAKE$LOCAL_APPLICATION integration (public client, no secret,
+        # loopback redirect to 127.0.0.1). The browser opens only on the first
+        # login; the access and refresh tokens are cached in the OS credential
+        # store and renewed silently, independent of ALLOW_ID_TOKEN. The token
+        # cache is keyed by user, and the token is bound to the user NAME (not
+        # LOGIN_NAME), so `user` must be the Snowflake user name.
+        conn_params["authenticator"] = "OAUTH_AUTHORIZATION_CODE"
+        conn_params["oauth_client_id"] = "LOCAL_APPLICATION"
+        conn_params["client_store_temporary_credential"] = True
 
     # Add optional connection parameters
     if config.warehouse:
@@ -423,7 +438,7 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
             "STATEMENT_TIMEOUT_IN_SECONDS": config.statement_timeout_seconds
         }
 
-    # The external-browser authenticator prints status text ("Going to open:
+    # The browser-based authenticators print status text ("Going to open:
     # https://...") to stdout. Under the stdio MCP transport stdout is the
     # JSON-RPC channel, so redirect any such output to stderr to avoid
     # corrupting the protocol stream.

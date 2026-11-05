@@ -23,10 +23,12 @@ examples/clients/
 In every file, replace `USER` and `path/to/snowflake-mcp-server` with your real
 absolute path, and create your `.env` first (see the main [README](../README.md)).
 
-> On first launch a browser window opens for external-browser authentication.
-> After the first successful login the SSO token is cached in the OS credential
-> store (Keychain / Windows Credential Manager / libsecret), so subsequent
-> launches and the periodic refresh do **not** reopen the browser.
+> With `SNOWFLAKE_AUTH_TYPE=oauth` a browser window opens on the first login
+> only. The OAuth access and refresh tokens are cached in the OS credential
+> store (Keychain / Windows Credential Manager / libsecret) and renewed
+> silently, so later launches and reconnects do **not** reopen the browser.
+> With `external_browser` the SSO token is only cached if the Snowflake account
+> allows ID tokens; otherwise each new connection reopens the browser.
 
 ---
 
