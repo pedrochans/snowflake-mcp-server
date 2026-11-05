@@ -93,6 +93,9 @@ class FakeConnection:
 @pytest.fixture
 def patched_manager(monkeypatch: pytest.MonkeyPatch) -> Callable[..., "FakeConnection"]:
     """Neutralize the connection manager; tests choose the scripted results."""
+    # The lifespan builds the config from the environment before initialize();
+    # stub it so the tests do not depend on a local .env (CI has none).
+    monkeypatch.setattr(main, "get_snowflake_config", lambda: None)
     monkeypatch.setattr(main.connection_manager, "initialize", lambda config: None)
     monkeypatch.setattr(main.connection_manager, "close", lambda: None)
 
