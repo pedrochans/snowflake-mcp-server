@@ -404,8 +404,9 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
         conn_params["authenticator"] = "externalbrowser"
         # Persist the SSO id token in the OS credential store (Keychain /
         # Windows Credential Manager / libsecret) so reconnects and the
-        # periodic refresh do not pop a browser window every time. Requires the
-        # keyring extra (snowflake-connector-python[secure-local-storage]).
+        # periodic refresh do not pop a browser window every time. Connector 5.x
+        # handles the OS credential store natively (no keyring extra). Caching
+        # only happens if the account allows ID tokens (ALLOW_ID_TOKEN).
         conn_params["client_store_temporary_credential"] = True
 
     # Add optional connection parameters
