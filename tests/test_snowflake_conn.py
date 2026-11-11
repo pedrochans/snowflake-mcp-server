@@ -301,6 +301,54 @@ def test_run_with_connection_reconnects_on_expired_session(
         ) = saved
 
 
+def test_reauthentication_request_is_session_expired() -> None:
+    """Connector 5.x signals a non-renewable session with ReauthenticationRequest,
+    whatever code and message it carries."""
+    from snowflake.connector.errors import ReauthenticationRequest
+
+    from snowflake_mcp_server.utils.snowflake_conn import _is_session_expired_error
+
+    with pytest.warns(FutureWarning):
+        error = ReauthenticationRequest(msg="unexpected core message", errno=1)
+    assert _is_session_expired_error(error)
+
+
+def test_run_with_connection_replaces_expired_connection(
+    snowflake_config_browser: SnowflakeConfig,
+) -> None:
+    """A connection whose master token expired is replaced before the query runs."""
+    mgr = SnowflakeConnectionManager()  # singleton
+    saved = (
+        mgr._connection,
+        mgr._connection_healthy,
+        mgr._last_failed_connect,
+        mgr._config,
+    )
+    try:
+        old_conn = MagicMock()
+        old_conn.is_closed.return_value = False
+        old_conn.expired = True
+        new_conn = MagicMock()
+        mgr._connection = old_conn
+        mgr._connection_healthy = True
+        mgr._last_failed_connect = None
+        mgr._config = snowflake_config_browser
+
+        def fake_connect() -> None:
+            mgr._connection = new_conn
+
+        with patch.object(mgr, "_connect", side_effect=fake_connect) as mock_connect:
+            assert mgr.run_with_connection(lambda conn: conn) is new_conn
+        mock_connect.assert_called_once()
+    finally:
+        (
+            mgr._connection,
+            mgr._connection_healthy,
+            mgr._last_failed_connect,
+            mgr._config,
+        ) = saved
+
+
 @patch("snowflake.connector.connect")
 def test_statement_timeout_passed_as_session_parameter(
     mock_connect: MagicMock,

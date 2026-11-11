@@ -33,29 +33,51 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from pydantic import BaseModel, SecretStr, ValidationInfo, field_validator
 from snowflake.connector import SnowflakeConnection
-from snowflake.connector.errors import DatabaseError, OperationalError
+from snowflake.connector.errors import (
+    DatabaseError,
+    OperationalError,
+    ReauthenticationRequest,
+)
 
 _T = TypeVar("_T")
 
 # Snowflake error codes that mean the session/token is no longer valid and the
 # connection must be re-established (e.g. after a long idle period).
-_SESSION_EXPIRED_ERROR_CODES = {390114, 390104, 390108, 390195}
+_SESSION_EXPIRED_ERROR_CODES = {390112, 390114, 390104, 390108, 390195}
 _SESSION_EXPIRED_MARKERS = (
     "authentication token has expired",
+    "session has expired",
     "session no longer exists",
     "session does not exist",
     "must authenticate again",
     "authenticate again",
+    "login again",
 )
 
 
 def _is_session_expired_error(error: BaseException) -> bool:
     """Return True if *error* indicates an expired/invalid Snowflake session."""
+    # Connector 5.x raises this when the master token can no longer be renewed,
+    # whatever code and message the core reports.
+    if isinstance(error, ReauthenticationRequest):
+        return True
     errno = getattr(error, "errno", None)
     if errno in _SESSION_EXPIRED_ERROR_CODES:
         return True
     message = str(error).lower()
     return any(marker in message for marker in _SESSION_EXPIRED_MARKERS)
+
+
+def _is_connection_expired(connection: SnowflakeConnection) -> bool:
+    """Return True if the connection's master token has expired.
+
+    Lets an idle connection be replaced before the query runs instead of
+    failing on it.
+    """
+    try:
+        return getattr(connection, "expired", False) is True
+    except Exception:
+        return True
 
 
 class AuthType(str, Enum):
@@ -217,6 +239,7 @@ class SnowflakeConnectionManager:
             self._connection is not None
             and self._connection_healthy
             and not self._connection.is_closed()
+            and not _is_connection_expired(self._connection)
         ):
             return
         if (
