@@ -1,0 +1,21 @@
+tests/test_mcp_server.py
+  s_c6f1aee8db565d::t_a39e5d738bf770 16,318-321,327-359
+snowflake_mcp_server/main.py
+  s_c6f1aee8db565d::t_35cbfcb7d9347f 29,33,138,146,151-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "aaeb079663b6ca46364ab97062458fa3c8714ed2",
+  "prompts": {},
+  "sessions": {
+    "s_c6f1aee8db565d": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "a975d839-3810-4ed9-92d7-ed0822692886",
+        "model": "claude-sonnet-5.5"
+      },
+      "human_author": "DiegoMN <diegomn@ext.inditex.com>"
+    }
+  }
+}
