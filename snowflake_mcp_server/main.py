@@ -26,9 +26,11 @@ from typing import Annotated, Any, Optional, TypeVar
 import anyio
 from dotenv import load_dotenv
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, SecretStr
 from snowflake.connector import SnowflakeConnection
+from snowflake.connector.errors import Error as SnowflakeError
 
 from snowflake_mcp_server.utils.snowflake_conn import (
     AuthType,
@@ -133,7 +135,7 @@ async def _run_db(impl: Callable[[SnowflakeConnection], _T]) -> _T:
         # 390309 with OAuth: the token is bound to the Snowflake user NAME, so
         # SNOWFLAKE_USER set to a LOGIN_NAME (e.g. an email) is rejected.
         if "390309" in message or "tied to the access token" in message:
-            raise RuntimeError(
+            raise ToolError(
                 f"{message}\n\nHint: with OAuth, SNOWFLAKE_USER must be your "
                 "Snowflake user NAME (run `SELECT CURRENT_USER();` or "
                 "`DESC USER <you>;` and use the NAME value), not your LOGIN_NAME."
@@ -141,11 +143,13 @@ async def _run_db(impl: Callable[[SnowflakeConnection], _T]) -> _T:
         # 250001 with external-browser auth almost always means SNOWFLAKE_USER
         # is not the user's Snowflake LOGIN_NAME. Point the user at the fix.
         if "250001" in message or "differs from the user" in message:
-            raise RuntimeError(
+            raise ToolError(
                 f"{message}\n\nHint: with external-browser SSO, SNOWFLAKE_USER "
                 "must be your Snowflake LOGIN_NAME (run `DESC USER <you>;` in "
                 "Snowsight and use the LOGIN_NAME value), not your display name."
             ) from e
+        if isinstance(e, SnowflakeError):
+            raise ToolError(message) from e
         raise
 
 

@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional, Sequence
 import pytest
 from mcp.client import Client
 from snowflake.connector import SnowflakeConnection
+from snowflake.connector.errors import ProgrammingError
 
 from snowflake_mcp_server import main
 
@@ -314,12 +315,45 @@ def test_auth_type_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> Non
     ],
 )
 async def test_user_mismatch_errors_get_auth_specific_hint(
-    monkeypatch: pytest.MonkeyPatch, error: str, hint: str
+    patched_manager: Callable[..., FakeConnection],
+    monkeypatch: pytest.MonkeyPatch,
+    error: str,
+    hint: str,
 ) -> None:
     def fail(operation: Callable[[SnowflakeConnection], Any]) -> Any:
         raise RuntimeError(error)
 
     monkeypatch.setattr(main.connection_manager, "run_with_connection", fail)
-    with pytest.raises(RuntimeError) as excinfo:
-        await main._run_db(lambda conn: None)
-    assert hint in str(excinfo.value)
+    async with Client(main.server) as client:
+        result = await client.call_tool("execute_query", {"query": "SELECT 1"})
+
+    assert result.is_error
+    assert hint in _text(result.content)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("error", "visible"),
+    [
+        (
+            ProgrammingError(msg="SQL compilation error: object not found", errno=2003),
+            True,
+        ),
+        (RuntimeError("unexpected internal detail"), False),
+    ],
+)
+async def test_database_errors_are_visible_but_unexpected_errors_are_not(
+    patched_manager: Callable[..., FakeConnection],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    visible: bool,
+) -> None:
+    def fail(operation: Callable[[SnowflakeConnection], Any]) -> Any:
+        raise error
+
+    monkeypatch.setattr(main.connection_manager, "run_with_connection", fail)
+    async with Client(main.server) as client:
+        result = await client.call_tool("execute_query", {"query": "SELECT 1"})
+
+    assert result.is_error
+    assert (str(error) in _text(result.content)) is visible
