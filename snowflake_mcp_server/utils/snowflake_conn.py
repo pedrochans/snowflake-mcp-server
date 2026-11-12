@@ -39,6 +39,8 @@ from snowflake.connector.errors import (
     ReauthenticationRequest,
 )
 
+from snowflake_mcp_server.utils.wsl_browser import install_wsl_browser_shim
+
 _T = TypeVar("_T")
 
 # Snowflake error codes that mean the session/token is no longer valid and the
@@ -460,6 +462,9 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
         conn_params["session_parameters"] = {
             "STATEMENT_TIMEOUT_IN_SECONDS": config.statement_timeout_seconds
         }
+
+    if config.auth_type in (AuthType.EXTERNAL_BROWSER, AuthType.OAUTH):
+        install_wsl_browser_shim()
 
     # The browser-based authenticators print status text ("Going to open:
     # https://...") to stdout. Under the stdio MCP transport stdout is the

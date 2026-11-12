@@ -124,9 +124,14 @@ extension). The `uv` binary lives inside WSL, so it must be launched through
 `-d Ubuntu` is your distro (`wsl -l -q` to list); `bash -lic` is a login shell so
 `uv` is on `PATH`. Prefer the Remote-WSL setup above whenever you can.
 
-Browser auth under WSL needs a browser to open: install `wslu` and
-`export BROWSER=wslview` so the Windows browser handles the SSO callback. On a
-headless server use private-key auth instead.
+Browser auth (`oauth` / `external_browser`) under WSL works out of the box. The
+native core of snowflake-connector 5.x ignores `BROWSER` on WSL and launches
+`explorer.exe <url>`, which for long login URLs opens File Explorer
+(Documents) instead of the browser, so the login times out. The server
+therefore prepends, for its own process only, an `explorer.exe` shim to `PATH`
+that opens URLs with `wslview` (from `wslu`, recommended) or, failing that,
+`rundll32 url.dll,FileProtocolHandler`. No shell or system configuration is
+changed. On a headless server use private-key auth instead.
 
 ---
 

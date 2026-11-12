@@ -225,7 +225,8 @@ and VS Code** — plus ready-made config files — is in
 | Symptom | Fix |
 |---------|-----|
 | Client can't find `uv` | Use the absolute path to `uv` (`which uv` / `where uv`) as the `command` in the client config. GUI apps often have a minimal `PATH`. |
-| Browser doesn't open on **WSL** | Install `wslu` and `export BROWSER=wslview`, or use private-key auth. |
+| Browser doesn't open on **WSL** / File Explorer (Documents) opens instead | Handled automatically: on WSL the server routes the connector's `explorer.exe <url>` call to `wslview` (install `wslu`) or `rundll32`. `BROWSER` is ignored by connector 5.x on WSL. Restart the MCP server after upgrading. |
+| Tool fails with only `Error executing tool <name>` | Fixed: Snowflake errors (login timeout, SQL errors) are now returned with their message. Upgrade and restart the server. |
 | Headless Linux server | No browser available — use private-key auth. |
 | `pip`/build errors on Windows | Install the Visual C++ Build Tools and restart. |
 | Corporate TLS / VPN errors | The server already uses the OS trust store; make sure your corporate root CA is installed there. |
