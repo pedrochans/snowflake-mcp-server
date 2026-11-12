@@ -1,0 +1,29 @@
+snowflake_mcp_server/utils/wsl_browser.py
+  s_c6f1aee8db565d::t_12fac1c273bd6e 1-73
+README.md
+  s_c6f1aee8db565d::t_d7fef8e724ef8c 228-229
+docs/clients.md
+  s_c6f1aee8db565d::t_a30a7e0ab482a1 127-134
+snowflake_mcp_server/utils/snowflake_conn.py
+  s_c6f1aee8db565d::t_36340dd03e5714 42-43,466-468
+tests/conftest.py
+  s_c6f1aee8db565d::t_a474c48fdc9394 1-11
+tests/test_wsl_browser.py
+  s_c6f1aee8db565d::t_d1b3a3ddf46850 1-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d439a2cdc5c0b0ff4e9f4b1023e3a1ecd565b56b",
+  "prompts": {},
+  "sessions": {
+    "s_c6f1aee8db565d": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "a975d839-3810-4ed9-92d7-ed0822692886",
+        "model": "claude-sonnet-5.5"
+      },
+      "human_author": "DiegoMN <diegomn@ext.inditex.com>"
+    }
+  }
+}
