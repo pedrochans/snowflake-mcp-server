@@ -14,7 +14,7 @@ dependencies = [
     "pydantic>=2.4.2",
     "python-dotenv>=1.0.0",
     "cryptography>=41.0.0",
-    "mcp",
+    "mcp==1.4.0",
     "anyio>=3.7.1",
     "sqlglot>=11.5.5",
     "pip-system-certs>=4.0"
