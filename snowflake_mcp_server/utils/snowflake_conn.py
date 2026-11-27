@@ -29,6 +29,7 @@ import snowflake.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationInfo, field_validator
 from snowflake.connector import SnowflakeConnection
 from snowflake.connector.errors import DatabaseError, OperationalError
@@ -85,8 +86,8 @@ def load_private_key(private_key_path: str) -> rsa.RSAPrivateKey:
 class SnowflakeConnectionManager:
     """Singleton manager for Snowflake connection pooling and refresh.
 
-    This class maintains a persistent connection to Snowflake and refreshes it
-    periodically in the background based on the configured refresh interval.
+    Browser authentication connects and refreshes only when a tool requests a
+    connection. Private key authentication also refreshes in the background.
     """
 
     _instance = None
@@ -139,9 +140,16 @@ class SnowflakeConnectionManager:
         self._initialized = True
 
     def initialize(self, config: SnowflakeConfig) -> None:
-        """Initialize the connection manager with the given configuration."""
+        """Configure the manager, deferring interactive authentication until use."""
         with self._connection_lock:
             self._config = config
+            if config.auth_type == AuthType.EXTERNAL_BROWSER:
+                if self._connection is not None:
+                    self._connection.close()
+                    self._connection = None
+                self._connection_healthy = False
+                return
+
             self._connect()
 
             # Start background refresh thread if not already running
@@ -155,7 +163,18 @@ class SnowflakeConnectionManager:
     def get_connection(self) -> SnowflakeConnection:
         """Get the current Snowflake connection, creating it if necessary."""
         with self._connection_lock:
-            if self._connection is None or not self._connection_healthy:
+            refresh_due = (
+                self._config is not None
+                and self._config.auth_type == AuthType.EXTERNAL_BROWSER
+                and self._last_refresh_time is not None
+                and datetime.now() - self._last_refresh_time >= self._refresh_interval
+            )
+            if (
+                self._connection is None
+                or not self._connection_healthy
+                or self._connection.is_closed()
+                or refresh_due
+            ):
                 if self._config is None:
                     raise ValueError(
                         "Connection manager not initialized with a configuration"
@@ -245,6 +264,12 @@ class SnowflakeConnectionManager:
 
             with self._connection_lock:
                 if (
+                    self._config is not None
+                    and self._config.auth_type == AuthType.EXTERNAL_BROWSER
+                ):
+                    continue
+
+                if (
                     self._last_refresh_time is not None
                     and datetime.now() - self._last_refresh_time
                     >= self._refresh_interval
@@ -295,6 +320,7 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
         conn_params["private_key"] = private_key
     elif config.auth_type == AuthType.EXTERNAL_BROWSER:
         conn_params["authenticator"] = "externalbrowser"
+        conn_params["client_session_keep_alive"] = False
 
     # Add optional connection parameters
     if config.warehouse:
@@ -312,4 +338,5 @@ def get_snowflake_connection(config: SnowflakeConfig) -> SnowflakeConnection:
 
 
 # Create a singleton instance for convenience
+load_dotenv()
 connection_manager = SnowflakeConnectionManager()

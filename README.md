@@ -9,7 +9,7 @@ This repository is a fork from [snowflake-mcp-server](https://github.com/dynamik
 - Flexible authentication to Snowflake using either:
   - Service account authentication with private key
   - External browser authentication for interactive sessions
-- Connection pooling with automatic background refresh to maintain persistent connections
+- Persistent connections with on-demand SSO authentication and background refresh for private key authentication
 - Support for querying multiple views and databases in a single session
 - Support for multiple SQL statement types (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH)
 - MCP-compatible handlers for querying Snowflake data
@@ -158,6 +158,16 @@ Follow the next steps by executing the commands in your terminal. **Preferably u
 
 ### Running in VS Code with Github Copilot
 
+For migrated Copilot sessions, manage the server through **Chat: Open
+Customizations** > **MCP Servers**. Its global configuration is
+`~/.copilot/mcp-config.json` and uses `mcpServers`; the steps below describe
+the legacy VS Code configuration.
+
+The server uses the MCP 1.4 SDK and responds to newer `server/discover` probes
+with `Method not found`, allowing clients to use the legacy initialization
+handshake. This is a compatibility bridge, not full support for the newer
+protocol.
+
 1. In VS Code, press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd>, then search for **MCP: Open User Configuration**
 3. In this JSON, add a new server with the full path to your uv executable:
    ```json
@@ -208,7 +218,7 @@ This is an example of how the entire JSON file should look like if you have only
 
    <img src="img/mcp-run-restart.png" alt="MCP Server Run/Restart" width="50%">
    
-   When using external browser authentication, a browser window will automatically open prompting you to log in to your Snowflake account.
+   With external browser authentication, starting the server and discovering tools do not open the browser. Login is requested only when a Snowflake tool needs a connection.
 
 4. If everything is OK, you will see the message: **"Discovered 5 tools"**
 
@@ -224,7 +234,7 @@ and start prompting!
    ![alt text](img/image-8.png)
 
 
-Authenticate, and just ask Copilot to query some data in Snowflake! 
+Ask Copilot to query some data in Snowflake, and authenticate when the tool first connects.
 
 ## Available Tools
 
@@ -261,7 +271,9 @@ When using with VS Code, you can ask questions like:
 
 Connection pooling behavior can be configured through environment variables:
 
-- `SNOWFLAKE_CONN_REFRESH_HOURS`: Time interval in hours between connection refreshes (default: 8)
+- `SNOWFLAKE_CONN_REFRESH_HOURS`: Time interval in hours between connection refreshes (default: 8). With external browser authentication, a due refresh happens only on the next Snowflake tool request, never in the background. Private key authentication keeps periodic background refresh.
+
+External browser authentication reuses the connection between requests. Snowflake session expiration can still require SSO when a tool is used. No token caching or keep-alive heartbeats are enabled by this behavior.
 
 Example `.env` configuration:
 ```

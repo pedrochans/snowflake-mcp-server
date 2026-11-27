@@ -14,8 +14,10 @@ Claude with secure, controlled access to Snowflake data for analysis and reporti
 # This is crucial for corporate environments with custom SSL certificates
 import pip_system_certs.wrapt_requests  # noqa: F401
 
+# isort: split
 import os
-from typing import Any, Dict, List, Optional, Sequence, Union
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Union
 
 import anyio
 import mcp.types as mcp_types
@@ -23,6 +25,7 @@ import sqlglot
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.shared.session import ReadStream, WriteStream
 from sqlglot.errors import ParseError
 
 from snowflake_mcp_server.utils.snowflake_conn import (
@@ -517,6 +520,49 @@ async def handle_execute_query(
         ]
 
 
+@asynccontextmanager
+async def _stdio_server_with_discovery_fallback() -> AsyncIterator[
+    tuple[ReadStream, WriteStream]
+]:
+    """Let newer clients fall back to the legacy MCP handshake."""
+    async with stdio_server() as (source, output):
+        sender, reader = anyio.create_memory_object_stream[
+            mcp_types.MessageFrame | Exception
+        ](0)
+
+        async def forward_messages() -> None:
+            async with source, sender:
+                async for frame in source:
+                    if not isinstance(frame, Exception):
+                        request = frame.message.root
+                        if (
+                            isinstance(request, mcp_types.JSONRPCRequest)
+                            and request.method == "server/discover"
+                        ):
+                            error = mcp_types.JSONRPCError(
+                                jsonrpc="2.0",
+                                id=request.id,
+                                error=mcp_types.ErrorData(
+                                    code=mcp_types.METHOD_NOT_FOUND,
+                                    message="Method not found",
+                                ),
+                            )
+                            await output.send(
+                                mcp_types.MessageFrame(
+                                    message=mcp_types.JSONRPCMessage(error), raw=None
+                                )
+                            )
+                            continue
+                    await sender.send(frame)
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(forward_messages)
+            try:
+                yield reader, output
+            finally:
+                tasks.cancel_scope.cancel()
+
+
 # Function to run the server with stdio interface
 def run_stdio_server() -> None:
     """Run the MCP server using stdin/stdout for communication."""
@@ -655,7 +701,7 @@ def run_stdio_server() -> None:
 
         init_options = server.create_initialization_options()
 
-        async with stdio_server() as (read_stream, write_stream):
+        async with _stdio_server_with_discovery_fallback() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, init_options)
 
     anyio.run(run)
